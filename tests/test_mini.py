@@ -236,9 +236,15 @@ def test_vector_layers_liste_toutes_les_couches_presentes_avec_leurs_champs(deux
     assert en_tete(os.path.join(deux[0], "fond.pmtiles"))["min_zoom"] == bandes.ZOOM_MIN_FOND
 
 
-def test_verifier_rend_1_sur_toute_erreur_avec_le_message(tmp_path, capsys):
-    from fabrique import cli
+def test_verifier_rend_1_sur_toute_erreur_avec_le_message(tmp_path, capsys, monkeypatch):
+    from fabrique import cli, verifier as v
     assert cli.principal(["verifier", str(tmp_path / "n_existe_pas")]) == 1
-    assert "erreur :" in capsys.readouterr().err
+    assert "ÉCHEC" in capsys.readouterr().out
+
+    def casse(dossier):
+        raise RuntimeError("tuile illisible")
+    monkeypatch.setattr(v, "verifier", casse)
+    assert cli.principal(["verifier", str(tmp_path)]) == 1
+    assert "erreur : tuile illisible" in capsys.readouterr().err
     (tmp_path / "vide").mkdir()
     assert cli.principal(["verifier", str(tmp_path / "vide")]) == 1
