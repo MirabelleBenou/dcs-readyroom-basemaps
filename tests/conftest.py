@@ -61,6 +61,10 @@ def osm_xml(chemin):
     anneau(10, 35.975, 35.445, 35.985, 35.452, {"natural": "water"})
     anneau(11, 36.005, 35.43, 36.027, 35.446, {"landuse": "forest"})
     anneau(12, 35.975, 35.415, 35.995, 35.428, {"landuse": "residential"})
+    # une frontière d'État (admin_level=2) à garder, une limite maritime et une limite de province à écarter
+    chemin_(13, [(35.97, 35.435), (35.995, 35.4375), (36.03, 35.435)], {"boundary": "administrative", "admin_level": "2"})
+    chemin_(14, [(35.97, 35.44), (36.03, 35.4405)], {"boundary": "administrative", "admin_level": "2", "maritime": "yes"})
+    chemin_(15, [(35.97, 35.4125), (36.03, 35.4128)], {"boundary": "administrative", "admin_level": "4"})
     nodes_fixes = nodes
     with open(chemin, "w") as f:
         f.write('<?xml version="1.0" encoding="UTF-8"?>\n<osm version="0.6" generator="essai">\n')

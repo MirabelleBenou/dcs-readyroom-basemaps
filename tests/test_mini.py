@@ -100,7 +100,7 @@ def test_couches_et_classes_de_routes(deux):
             if nom == "routes":
                 classes |= {f["properties"]["classe"] for f in c["features"]}
     assert {"mer", "rivage", "eau", "cours_eau", "courbes", "forets", "localites", "lieux", "routes", "rail",
-            "pistes", "grille"} <= couches
+            "pistes", "frontieres", "grille"} <= couches
     assert classes == {"motorway", "primary", "secondary"}           # ni tertiary, ni autre
 
 
