@@ -9,7 +9,7 @@ from pmtiles.writer import Writer
 from shapely.geometry import box
 from shapely.strtree import STRtree
 
-from . import bandes, merc
+from . import merc
 from .couches import COUCHES
 
 TAMPON = 64            # unités MVT de marge de découpe
