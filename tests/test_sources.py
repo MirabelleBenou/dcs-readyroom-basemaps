@@ -159,3 +159,24 @@ def test_echantillonnage_independant_de_la_fenetre(tmp_path):
     morceaux = np.vstack([src.lignes(g, i, min(g.haut, i + 40)) for i in range(0, g.haut, 40)])
     assert np.array_equal(tout, morceaux)
     assert tout.min() > 0
+
+
+def test_dalle_decalee_aux_bords_de_la_couverture(tmp_path):
+    """Les dalles Copernicus ont leurs bords décalés de l'entier (d'un demi-pixel ; ici d'un pixel et demi pour que le cas
+    soit net) : une ligne ou une colonne au-delà du dernier pixel de la dalle ne doit pas donner une fenêtre vide, mais
+    répéter le bord."""
+    from fabrique import merc, terrain
+    chemin = str(tmp_path / "d.tif")
+    n = 90
+    pas = 1.0 / n
+    z = np.full((n, n), 50.0, dtype="float32")
+    with rasterio.open(chemin, "w", driver="GTiff", height=n, width=n, count=1, dtype="float32", crs="EPSG:4326",
+                       transform=from_origin(35 - 1.5 * pas, 36 + 1.5 * pas, pas, pas)) as dst:
+        dst.write(z, 1)
+    e = [{"dalle": "N35_00_E035_00", "lat": 35, "lon": 35, "source": "glo30", "fichier": chemin}]
+    x0, y0 = merc.lonlat_vers_merc(35.0, 35.0)
+    # une grille entièrement au sud de la dalle : toutes ses lignes sont ramenées à 35°, donc au-delà du dernier pixel
+    g = terrain.Grille((float(x0) + 2000, float(y0) - 3000, float(x0) + 3000, float(y0) - 2000), marge_blocs=0)
+    out = terrain.SourceDEM(e).lignes(g, 0, g.haut)
+    assert out.shape == (g.haut, g.larg)
+    assert np.allclose(out, 50.0)

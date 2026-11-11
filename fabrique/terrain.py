@@ -123,9 +123,9 @@ class SourceDEM:
             rx, ry = ds.transform.a, -ds.transform.e
             cc = (lon[cols] - gauche) / rx - 0.5
             rr = (haut - lat[rows]) / ry - 0.5
-            c0 = int(max(0, math.floor(cc.min())))
+            c0 = int(min(ds.width - 1, max(0, math.floor(cc.min()))))
             c1 = int(min(ds.width - 1, math.floor(cc.max()) + 1))
-            r0 = int(max(0, math.floor(rr.min())))
+            r0 = int(min(ds.height - 1, max(0, math.floor(rr.min()))))
             r1 = int(min(ds.height - 1, math.floor(rr.max()) + 1))
             arr = ds.read(1, window=Window(c0, r0, c1 - c0 + 1, r1 - r0 + 1)).astype("float64")
             if ds.nodata is not None:
