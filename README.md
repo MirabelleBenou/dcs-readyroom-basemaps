@@ -88,6 +88,7 @@ python3.12 essais/rendre.py out/ centre:36.0,35.43,7 1200x800 clair z07_clair.pn
 ```
 
 Chromium is taken from `/opt/pw-browsers` (or `CHROMIUM_PATH`); WebGL runs through SwiftShader.
+`essais/comparer.py <A> <B>` compares two produced folders file by file (the manifest by its comparable part).
 Run the tests with `python3.12 -m pytest -q`.
 
 ## Sources and licences

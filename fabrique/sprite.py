@@ -44,7 +44,7 @@ def _hachure(taille, couleur, alpha):
     img = Image.new("L", (n, n), 0)
     from PIL import ImageDraw
     d = ImageDraw.Draw(img)
-    ep = max(1, int(round(0.9 * (taille / 8.0) * SUR)))
+    ep = max(1, int(round(1.2 * (taille / 4.0) * SUR)))
     for k in (-1, 0, 1):
         d.line([(-n // 2 + k * n, n + n // 2), (n + n // 2 + k * n, -n // 2)], fill=255, width=ep)
     img = img.resize((taille, taille), Image.LANCZOS)
@@ -105,7 +105,7 @@ def _carre(ratio, couleur, trait):
 def images(ratio):
     """Les images du sprite à un rapport de pixels donné (1 ou 2), dans un ordre fixe."""
     t = 256 * ratio
-    h = 8 * ratio
+    h = 4 * ratio          # un trait oblique tous les 4 px, la densité de '////' de papier.py à 100 dpi
     return [
         ("papier", _grain(t, PAPIER_CLAIR, 20261111)),
         ("papier-sombre", _grain(t, PAPIER_SOMBRE, 20261112, force=0.03, large=0.03)),
