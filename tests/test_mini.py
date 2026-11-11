@@ -221,3 +221,24 @@ def test_emprise_aucune_tuile_en_dehors(jeu, deux):
     ok, res = controles(deux[0], journal=lambda *a: None)
     assert ok
     assert res["tuiles_fond"] > 0 and res["tuiles_relief"] > 0
+
+
+def test_vector_layers_liste_toutes_les_couches_presentes_avec_leurs_champs(deux):
+    from fabrique.verifier import en_tete
+    from pmtiles.reader import MmapSource, Reader
+    with open(os.path.join(deux[0], "fond.pmtiles"), "rb") as f:
+        meta = Reader(MmapSource(f)).metadata()
+    declarees = {v["id"]: v["fields"] for v in meta["vector_layers"]}
+    presentes = {nom for t in tuiles_decodees(deux[0]).values() for nom in t}
+    assert presentes == set(declarees)
+    assert all(isinstance(champs, dict) for champs in declarees.values())
+    assert "classe" in declarees["routes"]
+    assert en_tete(os.path.join(deux[0], "fond.pmtiles"))["min_zoom"] == bandes.ZOOM_MIN_FOND
+
+
+def test_verifier_rend_1_sur_toute_erreur_avec_le_message(tmp_path, capsys):
+    from fabrique import cli
+    assert cli.principal(["verifier", str(tmp_path / "n_existe_pas")]) == 1
+    assert "erreur :" in capsys.readouterr().err
+    (tmp_path / "vide").mkdir()
+    assert cli.principal(["verifier", str(tmp_path / "vide")]) == 1
