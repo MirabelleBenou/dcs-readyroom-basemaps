@@ -56,7 +56,7 @@ def _hachure(taille, couleur, alpha):
 
 
 def _arbre(ratio, couleur):
-    """Un arbre : un cercle ouvert et un trait de tronc (papier.py : cercle vide, barre dessous)."""
+    """Un arbre : un cercle ouvert et un trait de tronc (esquisse de référence : cercle vide, barre dessous)."""
     from PIL import ImageDraw
     w, h = 10 * ratio, 12 * ratio
     n_w, n_h = w * SUR, h * SUR
@@ -91,7 +91,7 @@ def _barbule(ratio, couleur):
 
 
 def _carre(ratio, couleur, trait):
-    """Le carré des bourgs : un petit carré plein cerné d'encre (papier.py : marqueur 's')."""
+    """Le carré des bourgs : un petit carré plein cerné d'encre (esquisse de référence : marqueur 's')."""
     from PIL import ImageDraw
     w = h = 8 * ratio
     n = w * SUR
@@ -105,7 +105,7 @@ def _carre(ratio, couleur, trait):
 def images(ratio):
     """Les images du sprite à un rapport de pixels donné (1 ou 2), dans un ordre fixe."""
     t = 256 * ratio
-    h = 4 * ratio          # un trait oblique tous les 4 px, la densité de '////' de papier.py à 100 dpi
+    h = 4 * ratio          # un trait oblique tous les 4 px, la densité de '////' de l'esquisse de référence à 100 dpi
     return [
         ("papier", _grain(t, PAPIER_CLAIR, 20261111)),
         ("papier-sombre", _grain(t, PAPIER_SOMBRE, 20261112, force=0.03, large=0.03)),

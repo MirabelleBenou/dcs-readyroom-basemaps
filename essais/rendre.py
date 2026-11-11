@@ -3,7 +3,7 @@
 Usage : python3.12 essais/rendre.py <dossier> <cadre> <largeur>x<hauteur> <clair|sombre> <image.png>
   <cadre> : un fichier GeoJSON (l'emprise), "ouest,sud,est,nord", "carre:LON,LAT,KM" (un carré de KM km de côté)
             ou "centre:LON,LAT,ZOOM".
-Toute requête hors de 127.0.0.1 est refusée et comptée ; le compte est affiché et rendu en code de sortie (0 = zéro).
+Toute requête hors de 127.0.0.1 est refusée et comptée, de même que les réponses 404 ; les comptes sont affichés et le code de sortie vaut 0 s'il n'y en a aucune.
 """
 import glob
 import json
@@ -58,6 +58,7 @@ def rendre(dossier, cadre, taille, theme, image, chromium=None):
     largeur, hauteur = (int(v) for v in taille.lower().split("x"))
     srv, port = serveur.demarrer(dossier)
     refusees = []
+    erreurs404 = []
     try:
         with sync_playwright() as p:
             nav = p.chromium.launch(executable_path=chromium or trouver_chromium(), headless=True, args=ARGS_CHROMIUM)
@@ -72,7 +73,8 @@ def rendre(dossier, cadre, taille, theme, image, chromium=None):
                     refusees.append(u)
                     route.abort()
 
-            page.route("**/*", garde)
+            ctx.route("**/*", garde)          # sur le contexte : couvre aussi les fils et les pages ouvertes en cours de route
+            ctx.on("response", lambda r: erreurs404.append(r.url) if r.status == 404 else None)
             msgs = []
             page.on("console", lambda m: msgs.append("%s: %s" % (m.type, m.text)))
             page.on("pageerror", lambda e: msgs.append("pageerror: %s" % e))
@@ -90,7 +92,7 @@ def rendre(dossier, cadre, taille, theme, image, chromium=None):
     finally:
         srv.shutdown()
         srv.server_close()
-    return refusees, res, msgs
+    return refusees, res, msgs, erreurs404
 
 
 def verifier_image(chemin, minimum=200):
@@ -105,16 +107,19 @@ def principal(argv=None):
     if len(a) != 5 or a[3] not in ("clair", "sombre"):
         print(__doc__)
         return 2
-    refusees, res, msgs = rendre(*a)
+    refusees, res, msgs, introuvables = rendre(*a)
     n = verifier_image(a[4])
     print("image %s : %d couleurs distinctes ; vue %s" % (a[4], n, json.dumps(res)))
     print("requêtes refusées hors de 127.0.0.1 : %d" % len(refusees))
     for u in refusees:
         print("  refusée : %s" % u)
+    print("réponses 404 : %d" % len(introuvables))
+    for u in introuvables:
+        print("  404 : %s" % u)
     for m in msgs:
         if not m.startswith("log:") and not m.startswith("debug:"):
             print("  console : %s" % m)
-    return 0 if not refusees and n > 200 else 1
+    return 0 if not refusees and not introuvables and n > 200 else 1
 
 
 if __name__ == "__main__":

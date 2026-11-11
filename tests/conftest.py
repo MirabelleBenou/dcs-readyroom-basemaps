@@ -21,12 +21,13 @@ def emprise_geojson(chemin, boite=(LON0, LON1, LAT0, LAT1)):
         json.dump({"type": "Feature", "properties": {}, "geometry": {"type": "Polygon", "coordinates": [[list(p) for p in pts]]}}, f)
 
 
-def osm_xml(chemin):
-    """Nœuds d'abord, puis chemins : l'ordre d'un extrait Overpass `out body`."""
+def osm_xml(chemin, dlon=0.0):
+    """Nœuds d'abord, puis chemins : l'ordre d'un extrait Overpass `out body`. `dlon` décale tout vers l'est (degrés)."""
     nodes, ways = [], []
     nid = [1000]
 
     def noeud(lon, lat, tags=None):
+        lon = lon + dlon
         nid[0] += 1
         t = "".join('<tag k="%s" v="%s"/>' % (k, v) for k, v in (tags or {}).items())
         nodes.append('<node id="%d" lat="%.6f" lon="%.6f">%s</node>' % (nid[0], lat, lon, t) if t else
@@ -41,6 +42,12 @@ def osm_xml(chemin):
     # les lieux : seuls city et town survivent
     noeud(36.00, 35.43, {"place": "city", "name": "Ville"})
     noeud(35.99, 35.44, {"place": "town", "name": "Bourg"})
+    # des noms qui sortent d'un autre alphabet que celui des polices : le nom arabe cède à `name:en`, qui l'emporte
+    noeud(35.98, 35.425, {"place": "town", "name": "\u0627\u0644\u0644\u0627\u0630\u0642\u064a\u0629", "name:en": "Latakia"})
+    # un nom turc en ş et ğ (Special Elite ne les a pas : JetBrains Mono les écrit)
+    noeud(36.015, 35.435, {"place": "town", "name": "\u015ea\u011flam"})
+    # un nom géorgien sans name:en : aucune des deux polices n'a ses lettres, il se tait
+    noeud(36.02, 35.455, {"place": "town", "name": "\u10d7\u10d1\u10d8\u10da\u10d8\u10e1\u10d8"})
     noeud(36.01, 35.41, {"place": "village", "name": "Village"})
     noeud(36.02, 35.42, {"place": "hamlet", "name": "Hameau"})
     noeud(36.02, 35.45, {"place": "isolated_dwelling", "name": "Ferme"})
@@ -66,10 +73,28 @@ def osm_xml(chemin):
     chemin_(14, [(35.97, 35.44), (36.03, 35.4405)], {"boundary": "administrative", "admin_level": "2", "maritime": "yes"})
     chemin_(15, [(35.97, 35.4125), (36.03, 35.4128)], {"boundary": "administrative", "admin_level": "4"})
     nodes_fixes = nodes
-    with open(chemin, "w") as f:
+    with open(chemin, "w", encoding="utf-8") as f:
         f.write('<?xml version="1.0" encoding="UTF-8"?>\n<osm version="0.6" generator="essai">\n')
         f.write("\n".join(nodes_fixes + ways))
         f.write("\n</osm>\n")
+
+
+def lire_osm(chemin, travail, emprise_merc=None, couvre=None):
+    """Lit un extrait dans un magasin temporaire (le dossier `travail`) : rend {couche: [(ident, props, géométrie)]} et la lecture."""
+    from shapely.geometry import box
+    from fabrique import merc, osm
+    from fabrique.magasin import Magasin
+    if emprise_merc is None:
+        x0, y0 = merc.lonlat_vers_merc(LON0 - 0.5, LAT0 - 0.5)
+        x1, y1 = merc.lonlat_vers_merc(LON1 + 0.5, LAT1 + 0.5)
+        emprise_merc = box(float(x0), float(y0), float(x1), float(y1))
+    os.makedirs(str(travail), exist_ok=True)
+    mg = Magasin(os.path.join(str(travail), "m.sqlite"))
+    lecture = osm.lire([chemin], mg, emprise_merc, str(travail), couvre=couvre, journal=lambda *a: None)
+    from fabrique.couches import ENTITES
+    out = {c: list(mg.entites(c)) for c in ENTITES}
+    mg.fermer()
+    return out, lecture
 
 
 @pytest.fixture(scope="session")
@@ -84,8 +109,9 @@ def jeu(tmp_path_factory):
     return {"dossier": d, "emprise": emprise, "osm": osm, "cache": str(cache)}
 
 
-def entrees_relief(jeu, nom="a"):
-    """Les dalles synthétiques (la côte à 35,985° E, puis une rampe vers l'est) en entrées de manifeste, sans réseau."""
+def entrees_relief(jeu, nom="a", cote=35.985):
+    """Les dalles synthétiques (la côte à `cote` °E, puis une rampe vers l'est ; la mer est à 0 m) en entrées de manifeste,
+    sans réseau. Les fichiers portent les noms du seau : le dossier `dalles_<nom>` est un cache complet."""
     from fabrique import sources
     d = jeu["dossier"] / ("dalles_" + nom)
     d.mkdir(exist_ok=True)
@@ -94,7 +120,7 @@ def entrees_relief(jeu, nom="a"):
         chemin = str(d / ("Copernicus_DSM_COG_10_%s_DEM.tif" % sources.nom_dalle(lat, lon)))
         n = 360
         lons = lon + (np.arange(n) + 0.5) / n
-        z = np.tile(np.clip((lons - 35.985) * 40000, -1, 1500), (n, 1)).astype("float32")
+        z = np.tile(np.clip((lons - cote) * 40000, 0, 1500), (n, 1)).astype("float32")
         tr = from_origin(lon, lat + 1, 1.0 / n, 1.0 / n)
         with rasterio.open(chemin, "w", driver="GTiff", height=n, width=n, count=1, dtype="float32",
                            crs="EPSG:4326", transform=tr) as dst:

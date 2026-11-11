@@ -5,6 +5,8 @@ import time
 import urllib.error
 import urllib.request
 
+from shapely.geometry import box
+
 from .emprise import lire_emprise, surface_km2
 
 URL = "http://overpass-api.de/api/interpreter"
@@ -20,10 +22,11 @@ class OverpassErreur(RuntimeError):
 
 
 def verifier_surface(geom, maximum=SURFACE_MAX_KM2):
-    s = surface_km2(geom)
+    """Le refus porte sur la BOÎTE interrogée (c'est elle qu'Overpass reçoit), pas sur la surface du polygone."""
+    s = surface_km2(box(*geom.bounds))
     if s > maximum:
         raise OverpassErreur(
-            "emprise trop grande pour Overpass : %.0f km2 (maximum %.0f km2) ; "
+            "boîte de l'emprise trop grande pour Overpass : %.0f km2 (maximum %.0f km2) ; "
             "les grandes emprises se lisent dans un extrait de fichier" % (s, maximum))
     return s
 

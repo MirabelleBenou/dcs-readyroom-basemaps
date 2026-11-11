@@ -20,7 +20,7 @@ def test_urls_relatives_au_style():
         assert "http" not in txt.replace("pmtiles://", "") and "/home" not in txt
 
 
-def test_ordre_des_couches_de_papier_py():
+def test_ordre_des_couches_de_l_esquisse():
     s = les_styles()["clair"]
     ids = [l["id"] for l in s["layers"]]
     assert len(ids) == len(set(ids))
@@ -90,3 +90,26 @@ def test_les_trois_classes_de_routes_seulement():
         if l.get("source-layer") == "routes":
             classes.add(l["filter"][2])
     assert classes == {"secondary", "primary", "trunk", "motorway"}
+
+
+def test_toute_couleur_hors_hex6_et_rgb_est_refusee_par_le_controle():
+    for s in les_styles().values():
+        assert style.couleurs_invalides(s) == []
+    mauvais = {"layers": [
+        {"id": "a", "paint": {"fill-color": "red"}},
+        {"id": "b", "paint": {"line-color": "hsl(10, 50%, 50%)"}},
+        {"id": "c", "paint": {"line-color": ["match", ["get", "x"], 1, "#aabbcc", "#abc"]}},
+        {"id": "d", "paint": {"text-color": "rgba(1, 2, 3, 0.5)", "text-halo-color": "#aabbccdd"}},
+        {"id": "e", "paint": {"fill-color": "#aabbcc", "line-color": "rgb(1,2,3)"}},
+    ]}
+    assert sorted((i, c) for i, c, _ in style.couleurs_invalides(mauvais)) == [
+        ("a", "fill-color"), ("b", "line-color"), ("c", "line-color"), ("d", "text-halo-color")]
+
+
+def test_les_noms_s_ecrivent_avec_la_pile_special_elite_puis_jetbrains_mono():
+    for s in les_styles().values():
+        for l in s["layers"]:
+            if l["id"].startswith("noms-"):
+                assert l["layout"]["text-font"] == ["Special Elite", "JetBrains Mono"]
+            if l["id"].startswith("grille-"):
+                assert l["layout"]["text-font"] == ["JetBrains Mono"]

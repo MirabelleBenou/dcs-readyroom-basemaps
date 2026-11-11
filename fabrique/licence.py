@@ -17,8 +17,10 @@ GLO30_LONG = _copernicus_long(30)
 GLO30_COURT = "Copernicus WorldDEM-30 © DLR e.V., © Airbus DS"
 GLO90_LONG = _copernicus_long(90)
 GLO90_COURT = "Copernicus WorldDEM-90 © DLR e.V., © Airbus DS"
-POLICES = ("Special Elite © Astigmatic, Apache License 2.0; JetBrains Mono © JetBrains, "
-           "SIL Open Font License 1.1")
+# Special Elite : le détenteur de METADATA.pb et de la table `name` de la police amont (google/fonts, apache/specialelite) ;
+# JetBrains Mono : celui de l'en-tête de sa licence OFL.
+POLICES = ("Special Elite © Brian J. Bonislawsky DBA Astigmatic (AOETI), Apache License 2.0; "
+           "JetBrains Mono © The JetBrains Mono Project Authors, SIL Open Font License 1.1")
 CODE = "MIT License"
 CODE_DETENTEUR = "Copyright (c) 2026 MirabelleBenou"
 

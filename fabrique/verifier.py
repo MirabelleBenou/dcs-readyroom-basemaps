@@ -14,7 +14,7 @@ from rasterio.features import rasterize
 from rasterio.transform import from_origin
 from shapely.geometry import box
 
-from . import licence, manifeste, merc, style as stylemod
+from . import glyphes, licence, manifeste, merc, style as stylemod
 from .emprise import depuis_geojson
 from .fabriquer import emprise_merc
 
@@ -23,18 +23,23 @@ FICHIERS = ("fond.pmtiles", "relief.pmtiles", "style-clair.json", "style-sombre.
             "sprite/papier@2x.png")
 
 
+def en_tete(chemin):
+    with open(chemin, "rb") as f:
+        return deserialize_header(f.read(127))
+
+
 def lire_tuiles(chemin):
-    """[(z, x, y, octets décompressés)] d'un PMTiles."""
+    """Les tuiles d'un PMTiles, une à une (un générateur : rien n'est gardé) : (z, x, y, octets décompressés).
+    Un PMTiles sans tuile n'en donne aucune."""
     with open(chemin, "rb") as f:
         src = MmapSource(f)
         h = deserialize_header(src(0, 127))
-        out = []
+        if h["tile_entries_count"] == 0:
+            return
         for (z, x, y), data in all_tiles(src):
             if h["tile_compression"] == Compression.GZIP:
                 data = gzip.decompress(data)
-            out.append((z, x, y, bytes(data)))
-        tt = h["tile_type"]
-    return out, tt
+            yield z, x, y, bytes(data)
 
 
 def _coords(g):
@@ -75,22 +80,20 @@ def controles(dossier, journal=print):
     res["manifeste_comparable_sha256"] = manifeste.sha256_comparable(m)
 
     # --- critère 2 : ni village
-    tuiles, tt = lire_tuiles(os.path.join(dossier, "fond.pmtiles"))
-    res["tuiles_fond"] = len(tuiles)
+    chemin_fond = os.path.join(dossier, "fond.pmtiles")
     compte = {"city": 0, "town": 0}
     distincts = {"city": set(), "town": set()}
-    hors_emprise_tuile = 0
-    hors_marge = 0
+    n_tuiles = hors_emprise_tuile = hors_marge = 0
     parametres = {"y_coord_down": True}
-    for z, x, y, data in tuiles:
+    for z, x, y, data in lire_tuiles(chemin_fond):
+        n_tuiles += 1
         bt = box(*merc.bornes_tuile(z, x, y))
         if not em.intersects(bt):
             hors_emprise_tuile += 1
         t = mapbox_vector_tile.decode(data, default_options=parametres)
         xmin, ymin, xmax, ymax = merc.bornes_tuile(z, x, y)
         taille = xmax - xmin
-        bb = em.bounds
-        lim = (bb[0] - taille, bb[1] - taille, bb[2] + taille, bb[3] + taille)
+        cx_tous, cy_tous = [], []
         for nom, couche in t.items():
             for feat in couche["features"]:
                 p = feat["properties"]
@@ -103,24 +106,50 @@ def controles(dossier, journal=print):
                 if nom == "lieux" and p.get("place") not in ("city", "town"):
                     echec("entité de la couche lieux sans classe city/town (tuile %d/%d/%d)" % (z, x, y))
                 for cx, cy in _coords(feat["geometry"]):
-                    wx = xmin + cx / merc.ETENDUE_MVT * taille
-                    wy = ymax - cy / merc.ETENDUE_MVT * taille
-                    if not (lim[0] <= wx <= lim[2] and lim[1] <= wy <= lim[3]):
-                        hors_marge += 1
+                    cx_tous.append(cx)
+                    cy_tous.append(cy)
+        if cx_tous:
+            wx = xmin + np.asarray(cx_tous, dtype="float64") / merc.ETENDUE_MVT * taille
+            wy = ymax - np.asarray(cy_tous, dtype="float64") / merc.ETENDUE_MVT * taille
+            # la marge se mesure à l'emprise elle-même (son polygone), pas à sa boîte : une tuile de marge au plus
+            hors_marge += int((~shapely.dwithin(em, shapely.points(wx, wy), taille)).sum())
+    res["tuiles_fond"] = n_tuiles
     res["villes"] = len(distincts["city"])
     res["bourgs"] = len(distincts["town"])
     res["entites_lieux_toutes_tuiles"] = dict(compte)
     journal("ni village : aucune entité place hors city/town ; %d city et %d town distinctes (%d et %d entités sur "
             "toutes les tuiles)" % (res["villes"], res["bourgs"], compte["city"], compte["town"]))
 
+    # --- les noms : écrits (vus dans les tuiles), tus (au manifeste), et chaque plage de glyphes demandée existe
+    noms_m = m.get("noms", {})
+    res["noms"] = {}
+    for classe in ("city", "town"):
+        ecrits_m = {n for _, n in noms_m.get(classe, {}).get("ecrits", [])}
+        tus_m = noms_m.get(classe, {}).get("tus", [])
+        res["noms"][classe] = {"ecrits": len(distincts[classe]), "tus": len(tus_m)}
+        if distincts[classe] != ecrits_m:
+            echec("les noms %s des tuiles ne sont pas ceux du manifeste : %r au lieu de %r"
+                  % (classe, sorted(distincts[classe]), sorted(ecrits_m)))
+        for nom in sorted(distincts[classe]):
+            texte = nom + (nom.upper() if classe == "city" else "")
+            for c in sorted(set(texte)):
+                debut = ord(c) // 256 * 256
+                f = os.path.join(dossier, "glyphs", glyphes.NOM_PILE, "%d-%d.pbf" % (debut, debut + 255))
+                if not os.path.isfile(f):
+                    echec("le nom %r demande la plage de glyphes %d-%d, absente de la pile %s"
+                          % (nom, debut, debut + 255, glyphes.NOM_PILE))
+    journal("noms : %d villes et %d bourgs écrits, %d et %d tus (par classe : %s)"
+            % (res["noms"]["city"]["ecrits"], res["noms"]["town"]["ecrits"], res["noms"]["city"]["tus"],
+               res["noms"]["town"]["tus"], json.dumps(res["noms"], sort_keys=True)))
+
     # --- critère 5 : l'emprise
     if hors_emprise_tuile:
         echec("%d tuiles de fond.pmtiles ne touchent pas l'emprise" % hors_emprise_tuile)
     if hors_marge:
         echec("%d sommets du fond à plus d'une tuile de l'emprise" % hors_marge)
-    rel, tt_rel = lire_tuiles(os.path.join(dossier, "relief.pmtiles"))
-    res["tuiles_relief"] = len(rel)
-    for z, x, y, data in rel:
+    n_rel = 0
+    for z, x, y, data in lire_tuiles(os.path.join(dossier, "relief.pmtiles")):
+        n_rel += 1
         b = merc.bornes_tuile(z, x, y)
         if not em.intersects(box(*b)):
             echec("tuile de relief hors de l'emprise : %d/%d/%d" % (z, x, y))
@@ -130,8 +159,9 @@ def controles(dossier, journal=print):
         dedans = rasterize([(em, 1)], out_shape=a.shape, transform=tr, fill=0, all_touched=True, dtype="uint8").astype(bool)
         if (a[~dedans] > 0).any():
             echec("relief non transparent hors de l'emprise : %d/%d/%d" % (z, x, y))
+    res["tuiles_relief"] = n_rel
     journal("emprise : %d tuiles de fond et %d tuiles de relief, toutes au contact de l'emprise ; "
-            "aucun sommet à plus d'une tuile de marge" % (len(tuiles), len(rel)))
+            "aucun sommet à plus d'une tuile de marge (mesurée au polygone)" % (n_tuiles, n_rel))
 
     # --- critère 3 : les mentions
     with open(os.path.join(dossier, "LICENCE.txt"), encoding="utf-8") as f:
@@ -159,6 +189,8 @@ def controles(dossier, journal=print):
 
     # --- critère 4 : le fond se tait
     for t, s in sts.items():
+        for couche, cle, texte in stylemod.couleurs_invalides(s):
+            echec("style %s : la couleur %r (couche %s, %s) n'est ni #rrggbb ni rgb()/rgba()" % (t, texte, couche, cle))
         trop = stylemod.sature(s)
         if trop:
             echec("style %s : couleurs au-delà de 60 %% de saturation HSL : %s" % (t, trop))

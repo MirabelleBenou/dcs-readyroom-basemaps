@@ -32,7 +32,7 @@ def lettre_bande(lat):
 
 
 def carre_100km(zone, est, nord):
-    """Les deux lettres du carré de 100 km (comme planche.py), pour un point en UTM (mètres)."""
+    """Les deux lettres du carré de 100 km (comme l'esquisse de référence), pour un point en UTM (mètres)."""
     cols = LETTRES_COLONNES[(zone - 1) % 3]
     c = cols[int(est // 100000) - 1]
     r = LETTRES_LIGNES[(int(nord // 100000) + (5 if zone % 2 == 0 else 0)) % 20]
@@ -59,6 +59,33 @@ def parties_par_fuseau(emprise_merc, emprise_wgs):
     return out
 
 
+class HemisphereErreur(ValueError):
+    pass
+
+
+def verifier_hemisphere(emprise_wgs):
+    """La grille MGRS de ce lot ne couvre que l'hémisphère nord (aucun théâtre de la liste n'est au sud) : une emprise au
+    sud de l'équateur est refusée avec un message."""
+    if emprise_wgs.bounds[1] < 0:
+        raise HemisphereErreur("l'emprise descend au sud de l'équateur (latitude %.3f) : la grille MGRS de cette fabrique "
+                               "ne couvre que l'hémisphère nord" % emprise_wgs.bounds[1])
+
+
+def _tranches_de_latitude(g):
+    """Le polygone (Mercator) coupé aux limites des bandes de latitude MGRS (tous les 8 degrés : 32, 40, 48, 56 N...)."""
+    lon0, lat0 = merc.merc_vers_lonlat(g.bounds[0], g.bounds[1])
+    lon1, lat1 = merc.merc_vers_lonlat(g.bounds[2], g.bounds[3])
+    limites = [-80.0 + 8.0 * k for k in range(0, 21) if lat0 < -80.0 + 8.0 * k < lat1]
+    if not limites:
+        return [g]
+    ys = [-1e9] + [float(merc.lonlat_vers_merc(0.0, l)[1]) for l in limites] + [1e9]
+    out = []
+    for ya, yb in zip(ys[:-1], ys[1:]):
+        h = g.intersection(box(g.bounds[0] - 1, ya, g.bounds[2] + 1, yb))
+        out.extend(p for p in (h.geoms if hasattr(h, "geoms") else [h]) if p.geom_type == "Polygon" and p.area > 0)
+    return out
+
+
 def construire_grille(emprise_merc, emprise_wgs, pas, carres=False, etiquettes=True):
     """Les lignes, les étiquettes et les carrés de 100 km de la grille, en Mercator.
 
@@ -66,6 +93,7 @@ def construire_grille(emprise_merc, emprise_wgs, pas, carres=False, etiquettes=T
       lignes : [(LineString, {"niveau": pas})]
       points : [(Point, {"texte": ..., "type": "e"|"n"|"carre"})]
     """
+    verifier_hemisphere(emprise_wgs)
     lignes, points = [], []
     for zone, part in parties_par_fuseau(emprise_merc, emprise_wgs):
         tr_in = Transformer.from_crs(3857, epsg_fuseau(zone), always_xy=True)
@@ -90,12 +118,12 @@ def construire_grille(emprise_merc, emprise_wgs, pas, carres=False, etiquettes=T
             x, y = tr_out.transform(np.full_like(ns, e), ns)
             l = LineString(np.column_stack([x, y])).intersection(part)
             for g in _lignes(l):
-                lignes.append((g, {"niveau": int(pas)}))
+                lignes.append((g, {"niveau": int(pas), "zone": zone}))
         for n in ensemble_n:
             x, y = tr_out.transform(es, np.full_like(es, n))
             l = LineString(np.column_stack([x, y])).intersection(part)
             for g in _lignes(l):
-                lignes.append((g, {"niveau": int(pas)}))
+                lignes.append((g, {"niveau": int(pas), "zone": zone}))
         if etiquettes and pas <= 10000:
             for e in ensemble_e:
                 for n in ensemble_n:
@@ -122,14 +150,23 @@ def construire_grille(emprise_merc, emprise_wgs, pas, carres=False, etiquettes=T
                         continue
                     morceaux = [g for g in (morceau.geoms if hasattr(morceau, "geoms") else [morceau])
                                 if g.geom_type == "Polygon" and g.area > 0]
-                    if not morceaux:
-                        continue
-                    gros = max(morceaux, key=lambda g: g.area)
-                    p = gros.representative_point()
-                    lon, lat = merc.merc_vers_lonlat(p.x, p.y)
-                    ue, un = tr_in.transform(p.x, p.y)
-                    texte = "%d%s %s" % (zone, lettre_bande(float(lat)), carre_100km(zone, ue, un))
-                    points.append((p, {"texte": texte, "type": "carre"}))
+                    # un carré à cheval sur une limite de bande de latitude (32, 40, 48, 56 N) a deux étiquettes : une par morceau
+                    tranches = []
+                    for m in morceaux:
+                        tranches.extend(_tranches_de_latitude(m))
+                    # une étiquette par bande de latitude : le plus gros morceau de chaque bande
+                    par_bande = {}
+                    for t in tranches:
+                        p = t.representative_point()
+                        lat = float(merc.merc_vers_lonlat(p.x, p.y)[1])
+                        b = lettre_bande(lat)
+                        if b not in par_bande or t.area > par_bande[b][0].area:
+                            par_bande[b] = (t, p)
+                    for b in sorted(par_bande):
+                        _, p = par_bande[b]
+                        ue, un = tr_in.transform(p.x, p.y)
+                        texte = "%d%s %s" % (zone, b, carre_100km(zone, ue, un))
+                        points.append((p, {"texte": texte, "type": "carre"}))
     return lignes, points
 
 

@@ -8,9 +8,11 @@ ZOOM_MIN_RELIEF = 5
 ZOOM_MAX_RELIEF = 12
 
 AMPLITUDE_PX = 1.0        # amplitude du tremblement, en pixels du zoom médian de la bande
-ONDE_PX = 70.0            # longueur d'onde, idem  (le set_sketch_params(1.0, 70, 2) de papier.py)
+ONDE_PX = 70.0            # longueur d'onde, idem  (the reference sketch's amplitude 1.0, wavelength 70, randomness 2)
 TOLERANCE_PX = 0.5        # Douglas-Peucker : un demi-pixel de la bande
 ESPACE_ARBRES_PX = 24.0   # espacement des arbres des forêts, en pixels de la bande
+SEUIL_LIGNE_PX = 4.0      # une ligne plus courte que ça, à la bande, ne se dessine pas
+SEUIL_EAU_PX2 = 20.0      # un lac plus petit que ça, à la bande, ne se dessine pas
 
 
 def bande_de(z):

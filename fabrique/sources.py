@@ -6,6 +6,8 @@ import shutil
 import urllib.error
 import urllib.request
 
+import rasterio
+
 GLO30 = "glo30"
 GLO90 = "glo90"
 ABSENTE = "absente"
@@ -55,18 +57,6 @@ def choisir_dalles(boite, glo30_disponible, glo90_disponible):
     return out
 
 
-def existe_en_ligne(lat, lon, source):
-    """HEAD sur le seau : 200 -> oui ; 404 -> non ; tout autre refus est une erreur (jamais pris pour une absence)."""
-    req = urllib.request.Request(url_dalle(lat, lon, source), method="HEAD", headers={"User-Agent": USER_AGENT})
-    try:
-        with urllib.request.urlopen(req, timeout=60):
-            return True
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return False
-        raise SourceErreur("le seau %s refuse la dalle %s (HTTP %s)" % (HOTES[source], nom_dalle(lat, lon), e.code))
-
-
 def sha256_fichier(chemin):
     h = hashlib.sha256()
     with open(chemin, "rb") as f:
@@ -75,35 +65,79 @@ def sha256_fichier(chemin):
     return h.hexdigest()
 
 
-def telecharger(url, destination, tentatives=3):
-    """Télécharge url dans destination (écriture atomique) ; ne retélécharge pas un fichier déjà là."""
-    if os.path.exists(destination):
-        return destination
+# ---------------------------------------------------------------------- le cache et le réseau
+def chemin_cache(cache, lat, lon, source):
+    return os.path.join(cache, os.path.basename(url_dalle(lat, lon, source)))
+
+
+def marque_absence(cache, lat, lon, source):
+    """Le fichier qui dit « le seau n'a pas cette dalle (404) » : un cache complet n'a plus besoin du réseau."""
+    return chemin_cache(cache, lat, lon, source) + ".absente"
+
+
+def _telecharger(url, destination, ouvrir=urllib.request.urlopen, tentatives=3):
+    """Télécharge url. Rend True ; False pour un 404 (la dalle n'existe pas). Tout autre code HTTP est une erreur
+    (`SourceErreur`) qui arrête la fabrication. Le fichier ne prend sa place qu'entier : taille égale à Content-Length,
+    ouvert par rasterio ; le `.part` s'efface sur toute erreur."""
     os.makedirs(os.path.dirname(destination), exist_ok=True)
+    tmp = destination + ".part"
     derniere = None
     for _ in range(tentatives):
-        tmp = destination + ".part"
         try:
             req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-            with urllib.request.urlopen(req, timeout=300) as r, open(tmp, "wb") as f:
-                shutil.copyfileobj(r, f, 1 << 20)
+            with ouvrir(req, timeout=300) as r:
+                code = getattr(r, "status", 200)
+                if code != 200:
+                    raise SourceErreur("%s : HTTP %s" % (url, code))
+                attendu = r.headers.get("Content-Length")
+                with open(tmp, "wb") as f:
+                    shutil.copyfileobj(r, f, 1 << 20)
+            if attendu is not None and os.path.getsize(tmp) != int(attendu):
+                raise OSError("réponse tronquée : %d octets sur %s" % (os.path.getsize(tmp), attendu))
+            with rasterio.open(tmp) as ds:
+                if ds.count < 1 or ds.width < 1:
+                    raise OSError("dalle illisible")
             os.replace(tmp, destination)
-            return destination
-        except (urllib.error.URLError, OSError) as e:
+            return True
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return False
+            raise SourceErreur("le seau refuse %s (HTTP %s)" % (url, e.code))
+        except SourceErreur:
+            raise
+        except (urllib.error.URLError, OSError, rasterio.errors.RasterioError) as e:
             derniere = e
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
     raise SourceErreur("téléchargement impossible : %s (%r)" % (url, derniere))
 
 
-def preparer_dalles(boite, cache, glo30_disponible=None, glo90_disponible=None):
-    """Choisit les dalles et les met en cache ; rend les entrées du manifeste (une par dalle)."""
-    g30 = glo30_disponible or (lambda la, lo: existe_en_ligne(la, lo, GLO30))
-    g90 = glo90_disponible or (lambda la, lo: existe_en_ligne(la, lo, GLO90))
+def _dalle(cache, lat, lon, ouvrir):
+    """Le fichier d'une dalle et sa source : le cache d'abord (aucun réseau s'il suffit), puis le seau GLO-30, puis GLO-90
+    (404 seul), puis la mer (altitude 0). Rend (source, fichier ou None)."""
+    for src in (GLO30, GLO90):
+        local = chemin_cache(cache, lat, lon, src)
+        if os.path.isfile(local):
+            return src, local
+        if os.path.isfile(marque_absence(cache, lat, lon, src)):
+            continue
+        if _telecharger(url_dalle(lat, lon, src), local, ouvrir):
+            return src, local
+        open(marque_absence(cache, lat, lon, src), "w").close()
+    return ABSENTE, None
+
+
+def preparer_dalles(boite, cache, ouvrir=urllib.request.urlopen):
+    """Choisit les dalles et les met en cache ; rend les entrées du manifeste (une par dalle). Une fabrication au cache
+    complet ne touche pas le réseau."""
+    os.makedirs(cache, exist_ok=True)
     entrees = []
-    for d in choisir_dalles(boite, g30, g90):
-        e = {"dalle": d["dalle"], "lat": d["lat"], "lon": d["lon"], "source": d["source"], "adresse": d["url"]}
-        if d["url"]:
-            local = os.path.join(cache, os.path.basename(d["url"]))
-            telecharger(d["url"], local)
+    for lat, lon in sorted(dalles_necessaires(boite)):
+        src, local = _dalle(cache, lat, lon, ouvrir)
+        e = {"dalle": nom_dalle(lat, lon), "lat": lat, "lon": lon, "source": src,
+             "adresse": None if src == ABSENTE else url_dalle(lat, lon, src)}
+        if local:
             e["fichier"] = local                      # hors manifeste (propre au cache)
             e["taille"] = os.path.getsize(local)
             e["sha256"] = sha256_fichier(local)

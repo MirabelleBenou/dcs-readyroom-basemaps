@@ -59,7 +59,18 @@ def _normales(c, ferme):
 
 
 POIDS = (0.65, 0.35)       # somme = 1 : l'amplitude crête du déplacement ne dépasse jamais `amplitude`
+ECHELLE_VALEUR = 1.3        # le bruit de valeur atteint rarement ses bornes : on l'élargit, sans dépasser 1,5 px
 RAPPORT_ONDES = 2.3         # la seconde sinusoïde a une longueur d'onde plus courte
+
+
+TOLERANCE_FERMETURE = 1e-6      # mètres : « fermé » = extrémités égales à ce point près (atol), jamais relatif (rtol = 0)
+
+
+def est_ferme(c):
+    """Une ligne est fermée si ses extrémités sont égales (atol 1e-6 m, rtol nul) : jamais `np.allclose` par défaut,
+    dont la tolérance relative vaut des dizaines de mètres aux coordonnées Mercator."""
+    c = np.asarray(c)
+    return len(c) > 3 and bool(np.allclose(c[0], c[-1], atol=TOLERANCE_FERMETURE, rtol=0.0))
 
 
 def tremble(coords, seed, amplitude, longueur_onde, ferme=False):
@@ -71,7 +82,7 @@ def tremble(coords, seed, amplitude, longueur_onde, ferme=False):
     les chemins qui se touchent restent reliés.
     """
     c = np.asarray(coords, dtype="float64")
-    if ferme and np.allclose(c[0], c[-1]):
+    if ferme and np.allclose(c[0], c[-1], atol=TOLERANCE_FERMETURE, rtol=0.0):
         c = c[:-1]
     if len(c) < 2 or amplitude <= 0:
         return np.vstack([c, c[:1]]) if ferme else c
@@ -105,6 +116,58 @@ def tremble(coords, seed, amplitude, longueur_onde, ferme=False):
     if not ferme and longueur > 0:
         ext = np.minimum(s, longueur - s) / (longueur_onde / 2.0)
         f *= _lisse_pas(np.clip(ext, 0, 1))
+    out = d + _normales(d, ferme) * f[:, None]
+    if ferme:
+        out = np.vstack([out, out[:1]])
+    return out
+
+
+# ---------------------------------------------------------------------- le trait tremblé des couches calculées
+def bruit_valeur(x, y, pas, sel):
+    """Bruit de valeur lisse dans [-1, 1], fonction de la seule position : un treillis de côté `pas`, des valeurs
+    tirées par cellule (`hasard_cellules`), interpolées par smoothstep. Aucun état, aucun point d'origine."""
+    x = np.asarray(x, dtype="float64") / pas
+    y = np.asarray(y, dtype="float64") / pas
+    ix, iy = np.floor(x), np.floor(y)
+    tx, ty = _lisse_pas(x - ix), _lisse_pas(y - iy)
+    ix, iy = ix.astype(np.int64), iy.astype(np.int64)
+
+    def v(a, b):
+        return hasard_cellules(a, b, sel)[0] * 2.0 - 1.0
+
+    haut = v(ix, iy) * (1 - tx) + v(ix + 1, iy) * tx
+    bas = v(ix, iy + 1) * (1 - tx) + v(ix + 1, iy + 1) * tx
+    return haut * (1 - ty) + bas * ty
+
+
+def _densifier(c, pas_max, ferme):
+    """Sous-divise chaque segment en parts d'au plus pas_max : le même résultat pour un même segment, où qu'il soit."""
+    seg = np.diff(np.vstack([c, c[:1]]) if ferme else c, axis=0)
+    ls = np.hypot(seg[:, 0], seg[:, 1])
+    n_sub = np.maximum(1, np.ceil(ls / pas_max).astype(int))
+    pts = []
+    for i in range(len(seg)):
+        t = (np.arange(n_sub[i]) / n_sub[i])[:, None]
+        pts.append(c[i] + t * seg[i])
+    if not ferme:
+        pts.append(c[-1:])
+    return np.vstack(pts)
+
+
+def tremble_position(coords, amplitude, longueur_onde, sel, ferme=False):
+    """Le trait tremblé d'une ligne CALCULÉE (courbe, rivage, côte) : le déplacement est une fonction de la position,
+    pas de l'abscisse le long de la ligne. Deux morceaux d'une même courbe coupés en deux endroits différents se
+    recollent donc exactement, et un anneau se ferme sans précaution. Déplacement perpendiculaire à la ligne,
+    somme de deux bruits de valeur (poids 0,65 et 0,35 ; le second à longueur d'onde plus courte) : jamais plus de
+    1,3 × `amplitude` (1,3 px à l'amplitude de 1 px)."""
+    c = np.asarray(coords, dtype="float64")
+    if ferme and np.allclose(c[0], c[-1], atol=TOLERANCE_FERMETURE, rtol=0.0):
+        c = c[:-1]
+    if len(c) < 2 or amplitude <= 0:
+        return np.vstack([c, c[:1]]) if ferme else c
+    d = _densifier(c, longueur_onde / 12.0, ferme)
+    f = (POIDS[0] * bruit_valeur(d[:, 0], d[:, 1], longueur_onde, sel)
+         + POIDS[1] * bruit_valeur(d[:, 0], d[:, 1], longueur_onde / RAPPORT_ONDES, sel ^ 0x5DEECE66D)) * (amplitude * ECHELLE_VALEUR)
     out = d + _normales(d, ferme) * f[:, None]
     if ferme:
         out = np.vstack([out, out[:1]])

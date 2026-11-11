@@ -21,12 +21,12 @@ SOMBRE = {
 }
 
 PT = 100.0 / 72.0          # un point de matplotlib à 100 dpi, en pixels
-SC_VUE, SC_DETAIL = 0.8, 2.2   # l'échelle des traits de papier.py : vue (~31 m/px, zoom 11), détail (~10 m/px, zoom 12,6)
+SC_VUE, SC_DETAIL = 0.8, 2.2   # l'échelle des traits de l'esquisse de référence : vue (~31 m/px, zoom 11), détail (~10 m/px, zoom 12,6)
 Z_VUE, Z_DETAIL = 11.0, 12.6
 
 
 def larg(pt, bas=0.6, haut=1.1):
-    """Épaisseur en points matplotlib de papier.py -> interpolation par le zoom entre la vue et le détail."""
+    """Épaisseur en points matplotlib de l'esquisse de référence -> interpolation par le zoom entre la vue et le détail."""
     v, d = round(pt * SC_VUE * PT, 3), round(pt * SC_DETAIL * PT, 3)
     return ["interpolate", ["linear"], ["zoom"], 5, round(v * bas, 3), Z_VUE, v, Z_DETAIL, d, 14, round(d * haut, 3)]
 
@@ -157,7 +157,7 @@ def construire(palette, attributions, centre=(0.0, 0.0), zoom=9.0):
                         "text-letter-spacing": 0.15, "text-allow-overlap": False},
              "paint": {"text-color": P["grille"], "text-opacity": 0.55}})
     # 14 noms : villes en capitales, bourgs en bas de casse (Special Elite, halo papier) ; ni village ni son nom
-    elite = ["Special Elite"]
+    elite = ["Special Elite", "JetBrains Mono"]      # la pile des noms : glyphs/Special Elite,JetBrains Mono/
     halo = {"text-color": P["encre"], "text-halo-color": P["halo"], "text-halo-width": 1.8}
     ajouter({"id": "noms-bourgs", "type": "symbol", "source": fond, "source-layer": "lieux", "minzoom": 8,
              "filter": ["==", ["get", "place"], "town"],
@@ -213,6 +213,42 @@ def couleurs(style):
     for m in _RGB.finditer(txt):
         out.append((m.group(0), tuple(int(m.group(i)) for i in (1, 2, 3))))
     return out
+
+
+_FORMES_COULEUR = re.compile(r"^(#[0-9a-fA-F]{6}|rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(,\s*[0-9.]+\s*)?\))$")
+_CLES_COULEUR = ("-color", "-halo-color")
+
+
+def _chaines(v):
+    """Les chaînes d'une valeur de style qui peuvent être des couleurs : l'opérateur d'une expression (son premier
+    élément) et le nom d'une propriété lue par `get` n'en sont pas."""
+    if isinstance(v, str):
+        yield v
+    elif isinstance(v, (list, tuple)):
+        reste = v[1:] if v and isinstance(v[0], str) else v
+        if v and v[0] == "get":
+            return
+        for x in reste:
+            yield from _chaines(x)
+    elif isinstance(v, dict):
+        for x in v.values():
+            yield from _chaines(x)
+
+
+def couleurs_invalides(style):
+    """Les couleurs d'un style qui ne sont ni `#rrggbb` ni `rgb()` / `rgba()` : le contrôle de saturation ne saurait pas
+    les lire (nom de couleur, `hsl()`, `#rgb`, `#rrggbbaa`...). Rend [(couche, propriété, texte)]. Seules les propriétés
+    qui portent une couleur (`*-color`) sont regardées."""
+    mauvaises = []
+    for l in style.get("layers", []):
+        for bloc in ("paint", "layout"):
+            for cle, v in l.get(bloc, {}).items():
+                if not cle.endswith(_CLES_COULEUR):
+                    continue
+                for t in _chaines(v):
+                    if not _FORMES_COULEUR.match(t):
+                        mauvaises.append((l.get("id"), cle, t))
+    return mauvaises
 
 
 def sature(style, maximum=0.60):

@@ -21,8 +21,18 @@ def test_textes_au_caractere_pres():
                                 "Produced Work derived from this data and are made available under the ODbL.")
     assert licence.GLO30_COURT == "Copernicus WorldDEM-30 © DLR e.V., © Airbus DS"
     assert licence.OSM_COURT == "© OpenStreetMap contributors (ODbL)"
-    assert licence.POLICES == ("Special Elite © Astigmatic, Apache License 2.0; JetBrains Mono © JetBrains, "
-                               "SIL Open Font License 1.1")
+    assert licence.POLICES == ("Special Elite © Brian J. Bonislawsky DBA Astigmatic (AOETI), Apache License 2.0; "
+                               "JetBrains Mono © The JetBrains Mono Project Authors, SIL Open Font License 1.1")
+    assert licence.GLO30_LONG == ("Relief produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence "
+                                  "and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all "
+                                  "rights reserved. The organisations in charge of the Copernicus programme by law or by "
+                                  "delegation do not incur any liability for any use of the Copernicus WorldDEM-30.")
+    assert licence.GLO90_LONG == ("Relief produced using Copernicus WorldDEM-90 © DLR e.V. 2010-2014 and © Airbus Defence "
+                                  "and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all "
+                                  "rights reserved. The organisations in charge of the Copernicus programme by law or by "
+                                  "delegation do not incur any liability for any use of the Copernicus WorldDEM-90.")
+    assert licence.GLO90_COURT == "Copernicus WorldDEM-90 © DLR e.V., © Airbus DS"
+    assert licence.CODE == "MIT License" and licence.CODE_DETENTEUR == "Copyright (c) 2026 MirabelleBenou"
 
 
 def test_attributions_courtes_par_source():

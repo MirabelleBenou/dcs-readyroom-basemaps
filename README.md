@@ -25,8 +25,8 @@ No compiled tool outside pip and npm is needed (no tippecanoe, no GDAL command l
 ```
 python3.12 -m fabrique extraire-overpass --emprise zones/lattaquie.geojson --sortie lattaquie.osm.gz
 python3.12 -m fabrique fabriquer --emprise zones/lattaquie.geojson --osm lattaquie.osm.gz \
-        --cache-relief cache/ --sortie out/
-python3.12 -m fabrique verifier out/
+        --cache-relief ../cache/ --sortie ../out/ [--bloc-zoom 8]
+python3.12 -m fabrique verifier ../out/
 ```
 
 * `extraire-overpass` fetches a small area (refused above 5 000 km2) into an `.osm.gz`. Overpass is queried over
@@ -35,8 +35,16 @@ python3.12 -m fabrique verifier out/
 * `fabriquer` reads one or more `.osm`, `.osm.gz` or `.osm.pbf` files (sorted: nodes, ways, relations) and downloads
   the Copernicus tiles it needs into `--cache-relief`. An output folder that exists and is not empty is refused and
   nothing is written.
+  Build outside the working tree (`../out/` above): the output folder is refused if it exists and is not empty,
+  and a work folder `<sortie>.travail-*` (the on-disk spatial store, the node index, the elevation pyramid) is
+  created next to it and erased at the end, even on error.
+* `--bloc-zoom` (7 to 10, default 8) sets the size of the blocks the build is processed in: a block is one tile of
+  that zoom and is processed whole in memory, everything else lives on disk. A smaller zoom means bigger blocks
+  (more memory, faster); the output is byte-identical whatever the value. Peak memory depends on the block size,
+  not on the extent; disk use (work folder) grows with the extent.
 * `verifier` replays the checks on a produced folder: no village anywhere, the licence notices, the colour
-  saturation of both styles, and that nothing lies outside the extent. It exits with 0 or 1.
+  saturation and colour syntax of both styles, that nothing lies outside the extent, that every glyph range the
+  styles can ask for exists, and how many names were written or left silent per class. It exits with 0 or 1.
 
 The extent is a GeoJSON file holding a `Polygon` or a `MultiPolygon` in WGS84; nothing is written outside it.
 `zones/lattaquie.geojson` is a 50 x 50 km test square.
@@ -49,7 +57,7 @@ The extent is a GeoJSON file holding a `Polygon` or a `MultiPolygon` in WGS84; n
 | `relief.pmtiles` | shaded relief, WebP 512 px tiles with alpha (ink on transparent), zooms 5 to 12 |
 | `style-clair.json`, `style-sombre.json` | the two themes; **the same tiles** |
 | `sprite/` | `papier.json`, `papier.png`, `papier@2x.json`, `papier@2x.png` |
-| `glyphs/<font>/<start>-<end>.pbf` | Special Elite and JetBrains Mono, ranges 0-255 to 1024-1279 |
+| `glyphs/<fontstack>/<start>-<end>.pbf` | three stacks: `Special Elite,JetBrains Mono` (names; a glyph comes from Special Elite when it has it, else from JetBrains Mono), `JetBrains Mono` (grid) and `Special Elite`; ranges 0-255 to 1024-1279 plus the blocks that hold glyphs |
 | `LICENCE.txt` | the notices (one paragraph per source present in the manifest) |
 | `manifeste.json` | the inputs (path or address, size, sha256), tool versions, settings |
 
@@ -58,6 +66,10 @@ Vector layers: `mer`, `rivage`, `eau`, `cours_eau`, `courbes`, `forets` (tree po
 boundaries). The hand-drawn wobble of lines and outlines is baked into the geometry, per zoom band
 (5-6, 7-8, 9-10, 11-12, 13-14); runways and the grid stay straight. Villages, hamlets, isolated dwellings and
 localities are never drawn, at any zoom, and have no name.
+
+Names: the first of `name:en`, `int_name`, `name`. A name with a character that neither font holds is not written
+(the OSM id goes to the build log) rather than drawn with missing letters; `verifier` counts the names written and
+left silent per class.
 
 Builds are reproducible: the same inputs and the same tool versions give byte-identical tiles, styles, sprite and
 glyphs. The manifest carries the only date, in `fabrique_le`, outside the part used to compare two builds.
@@ -79,12 +91,13 @@ const carte = new maplibregl.Map({ container: 'carte', style });
 
 `web/essai.html` is a local test page. `essais/rendre.py` serves a produced folder (with `Range` support) and
 `web/`, opens the page in Chromium with every request outside `127.0.0.1` refused and counted, fits the map to a box,
-waits for `idle` and writes a PNG:
+waits for `idle` and writes a PNG; it also counts the 404 answers (the exit code is 0 only with no refused request,
+no 404 and a non-empty image):
 
 ```
-python3.12 essais/rendre.py out/ zones/lattaquie.geojson 1600x1600 clair vue_clair.png
-python3.12 essais/rendre.py out/ carre:35.99,35.43,12 1200x1200 sombre detail_sombre.png
-python3.12 essais/rendre.py out/ centre:36.0,35.43,7 1200x800 clair z07_clair.png
+python3.12 essais/rendre.py ../out/ zones/lattaquie.geojson 1600x1600 clair vue_clair.png
+python3.12 essais/rendre.py ../out/ carre:35.99,35.43,12 1200x1200 sombre detail_sombre.png
+python3.12 essais/rendre.py ../out/ centre:36.0,35.43,7 1200x800 clair z07_clair.png
 ```
 
 Chromium is taken from `/opt/pw-browsers` (or `CHROMIUM_PATH`); WebGL runs through SwiftShader.

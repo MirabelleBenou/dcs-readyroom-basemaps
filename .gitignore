@@ -16,3 +16,8 @@ dist/
 cache/
 sortie/
 essais/sortie/
+out/
+*.en-cours-*
+*.travail-*
+.en-cours-*/
+.travail-*/

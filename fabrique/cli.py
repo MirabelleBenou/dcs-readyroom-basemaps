@@ -17,6 +17,9 @@ def principal(argv=None):
     b.add_argument("--osm", required=True, nargs="+")
     b.add_argument("--cache-relief", required=True)
     b.add_argument("--sortie", required=True)
+    b.add_argument("--bloc-zoom", type=int, default=8, choices=range(7, 11), metavar="7..10",
+                   help="zoom pivot des blocs (7 à 10, 8 par défaut) : plus il est haut, moins la mémoire est sollicitée ; "
+                        "le résultat est le même")
 
     c = sp.add_parser("verifier", help="rejoue les contrôles sur un dossier produit")
     c.add_argument("dossier")
@@ -29,13 +32,13 @@ def principal(argv=None):
             print("ok : %d octets de XML, écrits dans %s" % (n, args.sortie))
         elif args.cmd == "fabriquer":
             from .fabriquer import fabriquer
-            fabriquer(args.emprise, args.osm, args.cache_relief, args.sortie)
+            fabriquer(args.emprise, args.osm, args.cache_relief, args.sortie, bloc_zoom=args.bloc_zoom)
         else:
             from .verifier import verifier
             return 0 if verifier(args.dossier) else 1
-    except Exception as e:  # message net, code 2
+    except Exception as e:  # message net ; code 1 pour `verifier` (toute erreur), 2 pour les autres commandes
         print("erreur : %s" % e, file=sys.stderr)
         if args.debug:
             raise
-        return 2
+        return 1 if args.cmd == "verifier" else 2
     return 0

@@ -65,3 +65,27 @@ def test_overpass_reessaie_sur_502_a_504_puis_renonce(tmp_path):
     assert "5 fois" in str(exc.value)
     assert overpass.URL.startswith("http://")
     assert "village" not in overpass.requete((0, 0, 1, 1)) and "hamlet" not in overpass.requete((0, 0, 1, 1))
+
+
+def test_le_refus_overpass_porte_sur_la_boite_pas_sur_le_polygone(tmp_path):
+    """Un L fin : sa surface est de quelques centaines de km2, mais la boîte envoyée à Overpass fait 3° x 3°."""
+    import json
+    from shapely.geometry import Polygon
+    ell = Polygon([(35, 34), (38, 34), (38, 34.05), (35.05, 34.05), (35.05, 37), (35, 37)])
+    assert emprise.surface_km2(ell) < 5000                      # le polygone seul passerait
+    with pytest.raises(overpass.OverpassErreur, match="boîte"):
+        overpass.verifier_surface(ell)
+    p = tmp_path / "l.geojson"
+    p.write_text(json.dumps({"type": "Polygon", "coordinates": [[list(c) for c in ell.exterior.coords]]}))
+    appels = []
+    with pytest.raises(overpass.OverpassErreur):
+        overpass.extraire(str(p), str(tmp_path / "x.osm.gz"), ouvrir=lambda *a, **k: appels.append(1))
+    assert not appels
+
+
+def test_une_emprise_au_sud_de_l_equateur_est_refusee_avec_un_message(tmp_path):
+    e = tmp_path / "s.geojson"
+    emprise_geojson(str(e), (35.0, 35.4, -1.0, 1.0))
+    with pytest.raises(Exception, match="hémisphère nord"):
+        fabriquer(str(e), [str(e)], str(tmp_path / "cache"), str(tmp_path / "sortie"))
+    assert not (tmp_path / "sortie").exists()

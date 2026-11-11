@@ -13,6 +13,10 @@ COUPURE = 0.25
 ASCENDANT = 26         # constante du décalage vertical (comme les piles de glyphes habituelles de MapLibre)
 PLAGES = tuple((i, i + 255) for i in range(0, 1280, 256))          # 0-255 ... 1024-1279
 POLICES = (("Special Elite", "SpecialElite-Regular.ttf"), ("JetBrains Mono", "JetBrainsMono-Regular.ttf"))
+# la pile des noms : chaque glyphe vient de Special Elite s'il l'a, sinon de JetBrains Mono. Le dossier porte le nom exact
+# que MapLibre demande pour "text-font": ["Special Elite", "JetBrains Mono"] (les noms de la pile joints par une virgule).
+PILE_NOMS = ("Special Elite", "JetBrains Mono")
+NOM_PILE = ",".join(PILE_NOMS)
 
 
 def _varint(n):
@@ -73,8 +77,54 @@ def glyphe(font, code):
     return _glyphe_pb(code, octets.tobytes(), larg, haut, gauche, -haut_px - ASCENDANT, avance)
 
 
+class Police:
+    """Une police du dépôt : le dessin des glyphes et la table des caractères qu'elle porte."""
+
+    def __init__(self, dossier_polices, fichier):
+        self.chemin = os.path.join(dossier_polices, fichier)
+        self.font = ImageFont.truetype(self.chemin, TAILLE, layout_engine=ImageFont.Layout.BASIC)
+        self.cmap = TTFont(self.chemin).getBestCmap()
+        self._cache = {}
+
+    def glyphe(self, code):
+        if code not in self._cache:
+            self._cache[code] = glyphe(self.font, code)
+        return self._cache[code]
+
+
+def charger_polices(dossier_polices):
+    return {nom: Police(dossier_polices, fichier) for nom, fichier in POLICES}
+
+
+def pile_couvre(polices, texte, pile=PILE_NOMS):
+    """Un texte s'écrit avec la pile si chaque caractère est dans au moins une de ses polices."""
+    return all(any(ord(c) in polices[n].cmap for n in pile) for c in texte)
+
+
+def plages_de(polices, pile):
+    """Les plages de 256 codes à écrire pour une pile : celles du cadrage (0-255 à 1024-1279) et toutes celles où
+    une des polices a un glyphe : aucune plage demandée par MapLibre pour un texte écrit ne reste sans réponse."""
+    blocs = {d // 256 for d, _ in PLAGES}
+    for n in pile:
+        blocs |= {code // 256 for code in polices[n].cmap}
+    return tuple((b * 256, b * 256 + 255) for b in sorted(blocs))
+
+
+def fabriquer_plage_pile(polices, pile, debut, fin):
+    """Le contenu d'un fichier `<début>-<fin>.pbf` pour une pile : par code, le glyphe de la première police qui l'a."""
+    corps = b""
+    for code in range(debut, fin + 1):
+        for n in pile:
+            if code in polices[n].cmap:
+                corps += _champ_octets(3, polices[n].glyphe(code))
+                break
+    nom = ",".join(pile)
+    p = _champ_octets(1, nom.encode("utf-8")) + _champ_octets(2, ("%d-%d" % (debut, fin)).encode()) + corps
+    return _champ_octets(1, p)
+
+
 def fabriquer_plage(ttf, nom, debut, fin):
-    """Le contenu d'un fichier `<début>-<fin>.pbf`."""
+    """Le contenu d'un fichier `<début>-<fin>.pbf` d'une police seule (un fichier TrueType)."""
     font = ImageFont.truetype(ttf, TAILLE, layout_engine=ImageFont.Layout.BASIC)
     cmap = TTFont(ttf).getBestCmap()
     corps = b""
@@ -85,14 +135,17 @@ def fabriquer_plage(ttf, nom, debut, fin):
     return _champ_octets(1, pile)
 
 
-def fabriquer_glyphes(dossier_polices, sortie):
-    """Écrit glyphs/<police>/<début>-<fin>.pbf ; rend la liste des chemins écrits."""
+def fabriquer_glyphes(dossier_polices, sortie, polices=None):
+    """Écrit glyphs/<pile>/<début>-<fin>.pbf pour Special Elite, JetBrains Mono (la grille) et la pile composée des noms ;
+    rend la liste des chemins écrits."""
+    polices = polices or charger_polices(dossier_polices)
     ecrits = []
-    for nom, fichier in POLICES:
-        d = os.path.join(sortie, "glyphs", nom)
+    piles = [(("Special Elite",), PLAGES), (("JetBrains Mono",), PLAGES), (PILE_NOMS, plages_de(polices, PILE_NOMS))]
+    for pile, plages in piles:
+        d = os.path.join(sortie, "glyphs", ",".join(pile))
         os.makedirs(d, exist_ok=True)
-        for debut, fin in PLAGES:
-            data = fabriquer_plage(os.path.join(dossier_polices, fichier), nom, debut, fin)
+        for debut, fin in plages:
+            data = fabriquer_plage_pile(polices, pile, debut, fin)
             p = os.path.join(d, "%d-%d.pbf" % (debut, fin))
             with open(p, "wb") as f:
                 f.write(data)
