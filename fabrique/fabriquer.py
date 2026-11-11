@@ -3,7 +3,6 @@ import json
 import os
 import resource
 import shutil
-import sys
 import time
 
 import numpy as np
@@ -13,7 +12,7 @@ from pmtiles.tile import TileType
 from . import bandes, glyphes, licence, manifeste, merc, mvt, osm, reliefpm, sprite, style, terrain
 from .couches import COUCHES, Constructeur
 from .emprise import lire_emprise
-from .sources import preparer_dalles, sha256_fichier
+from .sources import preparer_dalles
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

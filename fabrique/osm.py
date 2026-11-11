@@ -6,7 +6,7 @@ Les identifiants servent de graine : une entité garde son identifiant (`n123`, 
 import numpy as np
 import osmium
 import shapely
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString
 from shapely.validation import make_valid
 
 from .merc import lonlat_vers_merc

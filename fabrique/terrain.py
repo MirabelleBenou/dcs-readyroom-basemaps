@@ -8,7 +8,7 @@ from rasterio.features import rasterize
 from rasterio.transform import from_origin
 from rasterio.warp import Resampling, reproject
 from scipy import ndimage
-from shapely.geometry import LinearRing, Polygon, box
+from shapely.geometry import Polygon
 from shapely.validation import make_valid
 
 from . import merc

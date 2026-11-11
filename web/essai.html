@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Essai du fond</title>
+<link rel="stylesheet" href="/vendor/maplibre-gl/maplibre-gl.css">
+<style>html, body, #carte { margin: 0; padding: 0; width: 100%; height: 100%; } body { overflow: hidden; }</style>
+</head>
+<body>
+<div id="carte"></div>
+<script src="/vendor/pmtiles/pmtiles.js"></script>
+<script src="/web/charger-style.js"></script>
+<script type="module">
+import * as maplibregl from '/vendor/maplibre-gl/maplibre-gl.mjs';
+
+const protocole = new pmtiles.Protocol();
+maplibregl.addProtocol('pmtiles', protocole.tile);
+
+// demarrer({ style: '/fond/style-clair.json', boite: [ouest, sud, est, nord] })  -> cadre sur la boîte, sans marge
+// demarrer({ style, centre: [lon, lat], zoom })
+window.demarrer = async function (opt) {
+  const style = await chargerStyle(opt.style);
+  const options = { container: 'carte', style, fadeDuration: 0, attributionControl: false,
+                    canvasContextAttributes: { preserveDrawingBuffer: true }, interactive: false };
+  if (opt.centre) { options.center = opt.centre; options.zoom = opt.zoom; }
+  const carte = new maplibregl.Map(options);
+  window.__carte = carte;
+  await new Promise((ok, ko) => { carte.once('load', ok); carte.once('error', (e) => ko(e.error || e)); });
+  if (opt.boite) carte.fitBounds([[opt.boite[0], opt.boite[1]], [opt.boite[2], opt.boite[3]]], { padding: 0, animate: false });
+  await new Promise((ok) => {
+    const attendre = () => { if (carte.loaded() && carte.areTilesLoaded()) ok(); else carte.once('idle', attendre); };
+    carte.triggerRepaint();
+    carte.once('idle', attendre);
+  });
+  return { zoom: carte.getZoom(), centre: carte.getCenter().toArray() };
+};
+window.__pret = true;
+</script>
+</body>
+</html>

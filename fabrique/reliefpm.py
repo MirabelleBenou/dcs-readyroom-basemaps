@@ -1,6 +1,5 @@
 """relief.pmtiles : l'estompage en encre sur transparent, tuiles WebP 512 px, zooms 5 à 12."""
 import io
-import math
 
 import numpy as np
 from PIL import Image
@@ -9,7 +8,7 @@ from rasterio.transform import from_origin
 from shapely.geometry import box
 
 from . import bandes, merc
-from .terrain import Z_GRILLE, ALIGNEMENT, encre_relief, estompage, piramide
+from .terrain import Z_GRILLE, encre_relief, estompage, piramide
 
 TAILLE = merc.TAILLE_TUILE
 QUALITE_WEBP = 85

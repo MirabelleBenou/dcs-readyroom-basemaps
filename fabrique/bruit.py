@@ -75,7 +75,7 @@ def tremble(coords, seed, amplitude, longueur_onde, ferme=False):
         c = c[:-1]
     if len(c) < 2 or amplitude <= 0:
         return np.vstack([c, c[:1]]) if ferme else c
-    pas_max = longueur_onde / 6.0
+    pas_max = longueur_onde / 12.0
     seg = np.diff(np.vstack([c, c[:1]]) if ferme else c, axis=0)
     ls = np.hypot(seg[:, 0], seg[:, 1])
     n_sub = np.maximum(1, np.ceil(ls / pas_max).astype(int))

@@ -6,12 +6,11 @@ import math
 
 import numpy as np
 import shapely
-from shapely.geometry import LineString, MultiLineString, MultiPolygon, Point, Polygon
+from shapely.geometry import LineString, MultiLineString, Point, Polygon
 from shapely.ops import linemerge, unary_union
 from shapely.validation import make_valid
 
 from . import bandes, bruit, grille as mgrs, merc
-from .terrain import Terrain
 
 COUCHES = ("mer", "rivage", "eau", "cours_eau", "courbes", "forets", "localites", "lieux",
            "routes", "rail", "pistes", "frontieres", "grille")
@@ -81,8 +80,10 @@ def tremble_ligne(l, b, sel, simplifier=True):
 def tremble_polygone(p, b, sel):
     """Chaque anneau tremble ; les contours d'un même objet se ferment après déplacement."""
     p = p.simplify(bandes.tolerance(b), preserve_topology=True)
-    if p.is_empty or p.geom_type != "Polygon":
-        return _parties_polygones(p) and [make_valid(x) for x in _parties_polygones(p)] or []
+    if p.is_empty:
+        return []
+    if p.geom_type != "Polygon":
+        return [make_valid(x) for x in _parties_polygones(p)]
     anneaux = []
     for i, r in enumerate([p.exterior] + list(p.interiors)):
         c = np.asarray(r.coords)
@@ -130,9 +131,6 @@ class Constructeur:
                 continue
             out.append(g.intersection(self.emprise))
         return out
-
-    def _ligne_courte(self, l, b):
-        return l.length < bandes.SEUIL_LIGNE_PX * bandes.px(b) if hasattr(bandes, "SEUIL_LIGNE_PX") else l.length < SEUIL_LIGNE_PX * bandes.px(b)
 
     def _lignes_tremblees(self, lignes, b, sel, props):
         res = []

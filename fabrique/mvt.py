@@ -1,6 +1,5 @@
 """Découpe en tuiles vectorielles (MVT) et écriture du PMTiles. Ordre fixe, gzip sans date."""
 import gzip
-import os
 
 import mapbox_vector_tile
 import numpy as np
@@ -107,19 +106,3 @@ def ecrire_pmtiles(chemin, tuiles, emprise_wgs, metadata, tile_type=TileType.MVT
 
 def gzip_sans_date(data):
     return gzip.compress(data, compresslevel=9, mtime=0)
-
-
-def champs_couches(index_par_couche):
-    """vector_layers du TileJSON : les attributs réellement présents."""
-    out = []
-    for nom in COUCHES:
-        ic = index_par_couche.get(nom)
-        if ic is None:
-            continue
-        champs = {}
-        for _, p in ic.features:
-            for k, v in p.items():
-                champs[k] = "Number" if isinstance(v, (int, float)) else "String"
-        out.append({"id": nom, "fields": dict(sorted(champs.items())), "minzoom": bandes.ZOOM_MIN_FOND,
-                    "maxzoom": bandes.ZOOM_MAX_FOND})
-    return out

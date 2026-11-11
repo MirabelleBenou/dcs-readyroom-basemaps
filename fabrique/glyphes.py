@@ -2,7 +2,7 @@
 import os
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import ImageFont
 from fontTools.ttLib import TTFont
 from scipy import ndimage
 
