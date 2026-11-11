@@ -1,25 +1,13 @@
 {
-  "name": "basemaps",
-  "version": "1.0.0",
-  "description": "Paper-style vector basemaps for DCS World theatres, built from OpenStreetMap and the Copernicus DEM. Work in progress.",
-  "main": "index.js",
-  "directories": {
-    "test": "tests"
-  },
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
+  "name": "dcs-readyroom-basemaps",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Test page dependencies of the basemap factory: MapLibre GL JS and the PMTiles reader, served locally, never from a CDN.",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MirabelleBenou/dcs-readyroom-basemaps.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/MirabelleBenou/dcs-readyroom-basemaps/issues"
-  },
-  "homepage": "https://github.com/MirabelleBenou/dcs-readyroom-basemaps#readme",
   "dependencies": {
     "maplibre-gl": "6.17.0",
     "pmtiles": "4.5.0"
