@@ -77,6 +77,8 @@ is refused):
 
 `theatres/essai-lattaquie.json` is a small test theatre (the 50 x 50 km test square, read from a whole-country extract).
 
+`theatres/syria.json`, `theatres/germanycw.json` and `theatres/caucasus.json` are the three DCS World theatres. Each extent, `zones/<name>.geojson`, is the union of the theatre's map tiles at zoom 10 (as served by DCS Olympus) widened by 20 km and of the convex hull of its airfields (pydcs 1.0.0) widened by 50 km, holes filled. Each descriptor lists, main country first, every Geofabrik extract whose country reaches into that extent; an object found in two extracts is kept once. These are big builds: about 1.5 GB (Syria), 12 GB (GermanyCW) and 2.3 GB (Caucasus) of extracts to download, and 20 to 30 GB of work folder each.
+
 Run it with `python -B` (or `PYTHONDONTWRITEBYTECODE=1`): Python would otherwise try to write `__pycache__` folders into
 the code tree, which a locked-down container keeps read-only.
 

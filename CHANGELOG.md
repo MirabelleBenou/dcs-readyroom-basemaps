@@ -15,6 +15,7 @@ All notable changes to this project are documented here. Versions follow semanti
 - `theatre` command: builds a whole theatre from its descriptor (`theatres/<name>.json`) with given output, working and cache folders, for unattended runs in a locked-down container; progress lines on standard output; the build verifies itself before it succeeds.
 - `theatres/essai-lattaquie.json`, a small test theatre.
 - `requirements-fabrique.txt`: the closed, pinned list of runtime dependencies (no test or browser tooling).
+- `theatres/syria.json`, `theatres/germanycw.json`, `theatres/caucasus.json`: the three DCS World theatres, with their extents (`zones/`) and the Geofabrik extracts that cover them.
 
 ### Changed
 - Sea connectivity is computed in row bands: memory at that step no longer grows with the area; outputs are byte-identical.

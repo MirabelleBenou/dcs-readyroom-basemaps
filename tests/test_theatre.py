@@ -68,6 +68,43 @@ def test_le_theatre_d_essai():
     assert surface_km2(d.em_wgs) < 3000
 
 
+TROIS_THEATRES = {
+    "syria": (
+        ["asia/syria", "africa/egypt", "asia/gcc-states", "asia/iraq", "asia/israel-and-palestine", "asia/jordan",
+         "asia/lebanon", "europe/cyprus", "europe/turkey"],
+        (890000, 900000),
+        [(39.9547, 38.0120), (32.5615, 37.9777), (35.0121, 31.2084)]),      # Gulechoba, Konya, Nevatim
+    "germanycw": (
+        ["europe/germany", "europe/belgium", "europe/czech-republic", "europe/denmark", "europe/france/alsace",
+         "europe/france/champagne-ardenne", "europe/france/franche-comte", "europe/france/lorraine",
+         "europe/luxembourg", "europe/netherlands", "europe/poland", "europe/sweden", "europe/switzerland"],
+        (575000, 585000),
+        [(13.4273, 55.7288), (7.6001, 49.4369), (12.5230, 53.2024)]),       # Revinge, Ramstein, Wittstock
+    "caucasus": (
+        ["europe/georgia", "asia/armenia", "asia/azerbaijan", "asia/iran", "europe/turkey", "europe/ukraine",
+         "russia/north-caucasus-fed-district", "russia/south-fed-district"],
+        (803000, 813000),
+        [(45.0272, 41.6290), (41.6002, 41.6096), (44.6058, 43.7917)]),      # Vaziani, Batumi, Mozdok
+}
+
+
+def test_les_trois_theatres():
+    from shapely.geometry import Point
+    from fabrique.emprise import surface_km2
+    for nom in ("syria", "germanycw", "caucasus"):
+        chemins, (s_min, s_max), aerodromes = TROIS_THEATRES[nom]
+        attendu = {"nom": nom, "emprise": "zones/%s.geojson" % nom,
+                   "osm": ["https://download.geofabrik.de/%s-latest.osm.pbf" % c for c in chemins]}
+        with open(os.path.join(RACINE, "theatres", nom + ".json"), encoding="utf-8") as f:
+            assert json.load(f) == attendu
+        d = charger_descripteur(nom)
+        assert d.bloc_zoom == 8
+        assert d.em_wgs.geom_type == "Polygon"
+        assert s_min <= surface_km2(d.em_wgs) <= s_max
+        for lon, lat in aerodromes:
+            assert d.em_wgs.contains(Point(lon, lat))
+
+
 def test_descripteur_valide_et_bloc_zoom(tmp_path):
     r = racine_factice(tmp_path, {"mini": valide(), "dix": valide("dix", bloc_zoom=10), "a-b-9": valide("a-b-9")})
     assert charger_descripteur("mini", r).bloc_zoom == 8
