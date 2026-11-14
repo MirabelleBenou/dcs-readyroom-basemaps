@@ -120,7 +120,12 @@ python3.12 -m venv /opt/fabrique && /opt/fabrique/bin/pip install --no-deps --on
 
 `requirements.txt` stays the development environment.
 
-**Memory.** The one step whose memory grew with the area, the sea (which pixels of the zoom 10 grid are sea: low
+**Resources.** The work folder holds the elevation pyramid and the on-disk spatial store: about 3.1 GB for a 90 000 km2
+extent (3 x 3 degrees at 35 N), growing linearly with the area (plan for roughly 26 GB for 750 000 km2); that build
+takes about 17 minutes on two cores and peaks at about 600 MB. GDAL's block cache is capped at 64 MB for the run
+(set `GDAL_CACHEMAX` to choose another value), so that memory does not depend on the machine's.
+
+**Memory.** The step whose memory grew with the area, the sea (which pixels of the zoom 10 grid are sea: low
 pixels connected to the border of the extent and holding a seed), runs in row bands: the grids are packed one bit per
 pixel and the labelling is done band by band, so the output is byte-identical to the previous whole-grid computation.
 
