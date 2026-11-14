@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Versions follow semanti
 
 ## Unreleased
 
+## 0.1.0 - 2026-11-14
+
 ### Added
 - `fabrique`: builds a paper-style basemap for any area from OpenStreetMap extracts and the Copernicus DEM (GLO-30, with GLO-90 where GLO-30 is unavailable): vector tiles (`fond.pmtiles`, zooms 5–14), shaded relief (`relief.pmtiles`, zooms 5–12), light and dark styles, sprite, glyphs, licence notices and a build manifest.
 - Hand-drawn look baked into the geometry, per zoom band; true UTM/MGRS grid across zone boundaries.
