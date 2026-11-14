@@ -21,6 +21,7 @@ from shapely.geometry import box
 from . import bandes, couches, derive, glyphes, grille as mgrs, licence, magasin as mag, manifeste, merc, mvt, osm, \
     reliefpm, sprite, style, terrain
 from .emprise import lire_emprise
+from .progres import Muet
 from .sources import preparer_dalles
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -39,6 +40,18 @@ def verifier_dossier_sortie(sortie):
             raise SortieErreur("%s existe et n'est pas un dossier" % sortie)
         if os.listdir(sortie):
             raise SortieErreur("le dossier de sortie %s existe et n'est pas vide : rien n'est écrit" % sortie)
+
+
+def poser_droits(dossier):
+    """Fichiers en 644 et dossiers en 755, posés explicitement (quel que soit l'umask) ; un lien symbolique est une erreur."""
+    for racine, dirs, fichiers in os.walk(dossier):
+        for nom in dirs + fichiers:
+            p = os.path.join(racine, nom)
+            if os.path.islink(p):
+                raise SortieErreur("lien symbolique dans la sortie : %s" % p)
+        os.chmod(racine, 0o755)
+        for f in fichiers:
+            os.chmod(os.path.join(racine, f), 0o644)
 
 
 def emprise_merc(emprise_wgs):
@@ -183,8 +196,9 @@ def blocs_du_pivot(pz, em):
 
 
 def fabriquer(chemin_emprise, fichiers_osm, cache_relief, sortie, journal=print, entrees_relief=None,
-              bloc_zoom=BLOC_ZOOM_DEFAUT):
+              bloc_zoom=BLOC_ZOOM_DEFAUT, progres=None):
     """Fabrique le dossier de sortie. `entrees_relief` (tests) remplace le choix et le téléchargement des dalles.
+    `progres` (un `progres.Progres`) dit l'avancement ; par défaut, rien.
 
     Rien ne reste d'une fabrication qui échoue : ni dossier de sortie, ni dossier `.en-cours`, ni dossier de travail."""
     if not BLOC_ZOOM_MIN <= bloc_zoom <= BLOC_ZOOM_MAX:
@@ -202,8 +216,8 @@ def fabriquer(chemin_emprise, fichiers_osm, cache_relief, sortie, journal=print,
     travail = tempfile.mkdtemp(prefix=base + ".travail-", dir=parent)
     try:
         res = _fabriquer(chemin_emprise, em_wgs, fichiers_osm, cache_relief, tmp, travail, journal, entrees_relief,
-                         bloc_zoom)
-        os.chmod(tmp, 0o755)
+                         bloc_zoom, progres=progres)
+        poser_droits(tmp)
         os.replace(tmp, sortie)          # sur un dossier vide qui existe déjà, le rename le remplace : jamais de rmtree
         tmp = None
         return res
@@ -213,17 +227,24 @@ def fabriquer(chemin_emprise, fichiers_osm, cache_relief, sortie, journal=print,
             shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _fabriquer(chemin_emprise, em_wgs, fichiers_osm, cache_relief, tmp, travail, journal, entrees_relief, bloc_zoom):
+def _fabriquer(chemin_emprise, em_wgs, fichiers_osm, cache_relief, tmp, travail, journal, entrees_relief, bloc_zoom,
+               progres=None, entrees_osm=None, commit=None, theatre=None):
+    """Le travail : écrit le dossier dans `tmp`, avec ses fichiers temporaires dans `travail`.
+    `entrees_osm` : les entrées OSM du manifeste (par défaut : les fichiers eux-mêmes) ; `commit` : le commit de la
+    fabrique, s'il est donné (sinon Git le dit) ; `theatre` : le nom du théâtre, au manifeste."""
     chrono = Chrono(journal)
+    progres = progres if progres is not None else Muet()
     em = emprise_merc(em_wgs)
     shapely.prepare(em)
     lon0, lat0, lon1, lat1 = em_wgs.bounds
     # --- sources
+    progres.etape("dalles du relief")
     if entrees_relief is None:
         entrees_relief = preparer_dalles((lon0, lat0, lon1, lat1), cache_relief)
     chrono.etape("dalles du relief (%d)" % len(entrees_relief))
     dossier_polices = os.path.join(RACINE, "polices")
     polices = glyphes.charger_polices(dossier_polices)
+    progres.etape("lecture d'OpenStreetMap")
     mg = mag.Magasin(os.path.join(travail, "magasin.sqlite"))
     pyr = depot = depot_rel = None
     try:
@@ -231,7 +252,7 @@ def _fabriquer(chemin_emprise, em_wgs, fichiers_osm, cache_relief, tmp, travail,
         chrono.etape("OpenStreetMap lu dans le magasin (%s)" % ", ".join(
             "%s=%d" % (c, mg.compte(c)) for c in couches.ENTITES if mg.compte(c)))
         grille = terrain.Grille(em.bounds)
-        pyr = terrain.construire(grille, entrees_relief, em, travail, journal)
+        pyr = terrain.construire(grille, entrees_relief, em, travail, journal, progres=progres.rappel())
         chrono.etape("relief échantillonné, pyramide et mer globale")
         depot = mvt.Depot(os.path.join(travail, "fond.tuiles"))
         depot_rel = mvt.Depot(os.path.join(travail, "relief.tuiles"))
@@ -239,15 +260,20 @@ def _fabriquer(chemin_emprise, em_wgs, fichiers_osm, cache_relief, tmp, travail,
         ctx = Contexte(em, em_wgs, mg, pyr, depot, champs)
         blocs = blocs_du_pivot(bloc_zoom, em)
         n = 0
+        progres.etape("blocs du zoom %d" % bloc_zoom, 0, len(blocs))
         for i, bloc in enumerate(blocs, 1):
             n += traiter_bloc(ctx, bloc)
+            progres.avancer(i, len(blocs))
         chrono.etape("%d blocs du zoom %d : %d tuiles de fond" % (len(blocs), bloc_zoom, n))
+        progres.etape("survol (zooms %d à %d)" % (bandes.ZOOM_MIN_FOND, bloc_zoom - 1))
         n = traiter_survol(ctx, bloc_zoom, travail)
         chrono.etape("survol (zooms %d à %d) : %d tuiles de fond" % (bandes.ZOOM_MIN_FOND, bloc_zoom - 1, n))
+        progres.etape("tuiles du relief")
         nr = reliefpm.construire_relief(pyr, em, depot_rel)
         chrono.etape("relief : %d tuiles" % nr)
 
         # --- écriture
+        progres.etape("écriture de fond.pmtiles et relief.pmtiles")
         att = licence.attributions_courtes(entrees_relief)
         vector_layers = [{"id": c, "fields": dict(sorted(champs.get(c, {}).items())), "minzoom": bandes.ZOOM_MIN_FOND,
                           "maxzoom": bandes.ZOOM_MAX_FOND} for c in couches.COUCHES if c in champs]
@@ -258,6 +284,7 @@ def _fabriquer(chemin_emprise, em_wgs, fichiers_osm, cache_relief, tmp, travail,
                            {"name": "relief", "format": "webp", "type": "overlay", "attribution": att["relief"]},
                            travail, tile_type=TileType.WEBP)
         chrono.etape("fond.pmtiles et relief.pmtiles écrits")
+        progres.etape("styles, sprite, glyphes, licence")
         centre = ((lon0 + lon1) / 2, (lat0 + lat1) / 2)
         style.ecrire_style(os.path.join(tmp, "style-clair.json"), style.construire(style.CLAIR, att, centre))
         style.ecrire_style(os.path.join(tmp, "style-sombre.json"), style.construire(style.SOMBRE, att, centre))
@@ -268,17 +295,20 @@ def _fabriquer(chemin_emprise, em_wgs, fichiers_osm, cache_relief, tmp, travail,
         chrono.etape("styles, sprite, glyphes, licence")
         with open(chemin_emprise, encoding="utf-8") as f:
             gj = json.load(f)
+        progres.etape("manifeste")
         pic = memoire_mio()
         m = manifeste.construire(
             RACINE,
             {**manifeste.entree_fichier(chemin_emprise), "geometrie": gj},
-            [manifeste.entree_fichier(f) for f in fichiers_osm],
+            entrees_osm if entrees_osm is not None else [manifeste.entree_fichier(f) for f in fichiers_osm],
             entrees_relief,
             [manifeste.entree_fichier(os.path.join(dossier_polices, fn), "polices/" + fn) for _, fn in glyphes.POLICES],
             os.path.basename(chemin_emprise),
             noms=lecture.resume(),
             execution={"bloc_zoom": bloc_zoom, "duree_s": round(time.time() - chrono.t0, 1),
-                       "memoire_mio": round(pic), "travail_octets": mag.taille_dossier(travail)})
+                       "memoire_mio": round(pic), "travail_octets": mag.taille_dossier(travail),
+                       **({"theatre": True} if theatre is not None else {})},
+            commit=commit, theatre=theatre)
         manifeste.ecrire(os.path.join(tmp, "manifeste.json"), m)
         travail_octets = mag.taille_dossier(travail)
     finally:

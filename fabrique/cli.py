@@ -1,4 +1,4 @@
-"""Les trois commandes : extraire-overpass, fabriquer, verifier."""
+"""Les commandes : extraire-overpass, fabriquer, theatre, verifier."""
 import argparse
 import sys
 
@@ -21,6 +21,12 @@ def principal(argv=None):
                    help="zoom pivot des blocs (7 à 10, 8 par défaut) : plus il est haut, moins la mémoire est sollicitée ; "
                         "le résultat est le même")
 
+    t = sp.add_parser("theatre", help="fabrique un théâtre entier (descripteur theatres/<nom>.json), sans surveillance")
+    t.add_argument("nom")
+    t.add_argument("--sortie", required=True, help="n'existe pas encore (son parent, si)")
+    t.add_argument("--travail", required=True, help="existe et est vide ; vidé en sortant")
+    t.add_argument("--cache", required=True, help="existe ; les extraits et les dalles s'y gardent d'une fabrication à l'autre")
+
     c = sp.add_parser("verifier", help="rejoue les contrôles sur un dossier produit")
     c.add_argument("dossier")
 
@@ -33,6 +39,11 @@ def principal(argv=None):
         elif args.cmd == "fabriquer":
             from .fabriquer import fabriquer
             fabriquer(args.emprise, args.osm, args.cache_relief, args.sortie, bloc_zoom=args.bloc_zoom)
+        elif args.cmd == "theatre":
+            import signal
+            from .theatre import theatre
+            signal.signal(signal.SIGTERM, lambda *a: sys.exit(143))        # `finally` vide alors le dossier de travail
+            theatre(args.nom, args.sortie, args.travail, args.cache)
         else:
             from .verifier import verifier
             return 0 if verifier(args.dossier) else 1

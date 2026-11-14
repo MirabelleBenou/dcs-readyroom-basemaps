@@ -3,6 +3,7 @@ import gzip
 import io
 import json
 import os
+import stat
 
 import mapbox_vector_tile
 import numpy as np
@@ -21,6 +22,71 @@ from .fabriquer import emprise_merc
 FICHIERS = ("fond.pmtiles", "relief.pmtiles", "style-clair.json", "style-sombre.json", "LICENCE.txt",
             "manifeste.json", "sprite/papier.json", "sprite/papier.png", "sprite/papier@2x.json",
             "sprite/papier@2x.png")
+
+
+RACINE_ATTENDUE = ("fond.pmtiles", "relief.pmtiles", "style-clair.json", "style-sombre.json", "sprite", "glyphs",
+                   "LICENCE.txt", "manifeste.json")
+DOSSIERS_ATTENDUS = ("sprite", "glyphs")
+MODE_FICHIER, MODE_DOSSIER = 0o644, 0o755
+
+
+def gabarit(dossier):
+    """Le gabarit du dossier rendu : rien d'autre que `RACINE_ATTENDUE` à la racine (`sprite/` et `glyphs/` sont des
+    dossiers) ; fichiers en 644, dossiers en 755 (la racine aussi) ; aucun lien symbolique. Rend la liste des écarts."""
+    ecarts = []
+    if os.path.islink(dossier):
+        return ["le dossier est un lien symbolique : %s" % dossier]
+    if not os.path.isdir(dossier):
+        return ["pas un dossier : %s" % dossier]
+    presents = set(os.listdir(dossier))
+    for n in sorted(presents - set(RACINE_ATTENDUE)):
+        ecarts.append("entrée de trop à la racine : %s" % n)
+    for n in RACINE_ATTENDUE:
+        chemin = os.path.join(dossier, n)
+        if n not in presents:
+            ecarts.append("fichier absent : %s" % n)
+        elif os.path.islink(chemin):
+            pass                                      # dit plus bas, avec tous les liens
+        elif (n in DOSSIERS_ATTENDUS) != os.path.isdir(chemin):
+            ecarts.append("%s doit être %s" % (n, "un dossier" if n in DOSSIERS_ATTENDUS else "un fichier"))
+    for racine, dirs, fichiers in os.walk(dossier):
+        for nom in dirs + fichiers:
+            chemin = os.path.join(racine, nom)
+            rel = os.path.relpath(chemin, dossier)
+            if os.path.islink(chemin):
+                ecarts.append("lien symbolique : %s" % rel)
+                continue
+            mode = stat.S_IMODE(os.lstat(chemin).st_mode)
+            attendu = MODE_DOSSIER if os.path.isdir(chemin) else MODE_FICHIER
+            if mode != attendu:
+                ecarts.append("droits %o au lieu de %o : %s" % (mode, attendu, rel))
+        mode = stat.S_IMODE(os.lstat(racine).st_mode)
+        if racine == dossier and mode != MODE_DOSSIER:
+            ecarts.append("droits %o au lieu de %o : la racine du dossier" % (mode, MODE_DOSSIER))
+    return ecarts
+
+
+def _adresse_relative(texte):
+    """Une adresse du style : `./…` ou `pmtiles://./…`, jamais absolue (`/…`), jamais d'autre `://`."""
+    reste = texte[len("pmtiles://"):] if texte.startswith("pmtiles://") else texte
+    return reste.startswith("./") and "://" not in reste
+
+
+def adresses_relatives(style):
+    """Les adresses des sources, du sprite et des glyphes d'un style qui ne sont pas relatives."""
+    mauvaises = []
+    for nom, src in style.get("sources", {}).items():
+        urls = ([src["url"]] if "url" in src else []) + list(src.get("tiles", []))
+        for u in urls:
+            if not isinstance(u, str) or not _adresse_relative(u):
+                mauvaises.append("source %s : %r" % (nom, u))
+        if "url" not in src and "tiles" not in src:
+            mauvaises.append("source %s : ni url ni tiles" % nom)
+    for cle in ("sprite", "glyphs"):
+        u = style.get(cle)
+        if not isinstance(u, str) or not _adresse_relative(u):
+            mauvaises.append("%s : %r" % (cle, u))
+    return mauvaises
 
 
 def en_tete(chemin):
@@ -66,13 +132,25 @@ def controles(dossier, journal=print):
         res["echecs"].append(msg)
         journal("ÉCHEC : " + msg)
 
+    for e in gabarit(dossier):
+        echec(e)
     for f in FICHIERS:
-        if not os.path.isfile(os.path.join(dossier, f)):
+        if not os.path.isfile(os.path.join(dossier, f)) and "fichier absent : %s" % f not in res["echecs"]:
             echec("fichier absent : %s" % f)
     if res["echecs"]:
         return False, res
     with open(os.path.join(dossier, "manifeste.json"), encoding="utf-8") as f:
         m = json.load(f)
+    if not isinstance(m.get("fabrique"), dict) or not isinstance(m["fabrique"].get("commit"), str) \
+            or not m["fabrique"]["commit"]:
+        echec("manifeste.json ne nomme pas de fabrique.commit")
+        return False, res
+    for t in ("clair", "sombre"):
+        with open(os.path.join(dossier, "style-%s.json" % t), encoding="utf-8") as f:
+            for mauvaise in adresses_relatives(json.load(f)):
+                echec("style %s : adresse non relative : %s" % (t, mauvaise))
+    if res["echecs"]:
+        return False, res
     gj = m["entrees"]["emprise"]["geometrie"]
     em_wgs = depuis_geojson(gj)
     em = emprise_merc(em_wgs)

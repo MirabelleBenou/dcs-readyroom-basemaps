@@ -20,12 +20,13 @@ npm ci                                 # maplibre-gl and pmtiles, served locally
 
 No compiled tool outside pip and npm is needed (no tippecanoe, no GDAL command line, no Java).
 
-## The three commands
+## The commands
 
 ```
 python3.12 -m fabrique extraire-overpass --emprise zones/lattaquie.geojson --sortie lattaquie.osm.gz
 python3.12 -m fabrique fabriquer --emprise zones/lattaquie.geojson --osm lattaquie.osm.gz \
         --cache-relief ../cache/ --sortie ../out/ [--bloc-zoom 8]
+python3.12 -m fabrique theatre <name> --sortie <folder> --travail <folder> --cache <folder>
 python3.12 -m fabrique verifier ../out/
 ```
 
@@ -42,12 +43,86 @@ python3.12 -m fabrique verifier ../out/
   that zoom and is processed whole in memory, everything else lives on disk. A smaller zoom means bigger blocks
   (more memory, faster); the output is byte-identical whatever the value. Peak memory depends on the block size,
   not on the extent; disk use (work folder) grows with the extent.
+* `theatre` builds a whole theatre from its descriptor, unattended: see "Building a theatre" below.
 * `verifier` replays the checks on a produced folder: no village anywhere, the licence notices, the colour
   saturation and colour syntax of both styles, that nothing lies outside the extent, that every glyph range the
-  styles can ask for exists, and how many names were written or left silent per class. It exits with 0 or 1.
+  styles can ask for exists, and how many names were written or left silent per class. It also checks the layout of
+  the folder: exactly `fond.pmtiles`, `relief.pmtiles`, `style-clair.json`, `style-sombre.json`, `sprite/`, `glyphs/`,
+  `LICENCE.txt` and `manifeste.json` at the root, files in mode 644, folders in 755, no symbolic link, relative
+  addresses only (`pmtiles://./...`, `./...`) for the sources, the sprite and the glyphs of both styles, and a
+  `fabrique.commit` in the manifest. It exits with 0 or 1.
 
 The extent is a GeoJSON file holding a `Polygon` or a `MultiPolygon` in WGS84; nothing is written outside it.
 `zones/lattaquie.geojson` is a 50 x 50 km test square.
+
+## Building a theatre
+
+`fabriquer` takes its inputs on the command line. `theatre` is the same build for a whole theatre, meant to be run by a
+launcher in a locked-down container with nobody watching: everything it needs is named by a **descriptor**, and
+everything it writes goes to three folders you give it.
+
+```
+python3.12 -m fabrique theatre essai-lattaquie --sortie /run/out/sortie --travail /run/out/travail --cache /var/cache/fonds
+```
+
+**The descriptor** is `theatres/<name>.json`, read from the code's own tree. The name matches
+`^[a-z0-9][a-z0-9-]{0,31}$` and equals the file name without `.json`. Keys, and no others (an unknown or a missing key
+is refused):
+
+* `nom`: the name;
+* `emprise`: a path relative to the repository root, under `zones/`, to a GeoJSON extent (as for `fabriquer`);
+* `osm`: a non-empty list of `https://` addresses (nothing else is accepted, no credentials, no query string), each
+  ending in `.osm.pbf`, `.osm.gz` or `.osm`;
+* `bloc_zoom` (optional): 7 to 10, 8 by default.
+
+`theatres/essai-lattaquie.json` is a small test theatre (the 50 x 50 km test square, read from a whole-country extract).
+
+**The three folders.** Before anything is written the command checks, and refuses with a non-zero exit code and a plain
+message: the descriptor; that `--sortie` does not exist and its parent does; that `--travail` exists and is empty (and
+is on the same file system as the parent of `--sortie`); that `--cache` exists; and `FABRIQUE_COMMIT` if it is set.
+
+* `--sortie`: appears at the end, by a single `os.replace` from the work folder, complete and verified. Files are in
+  mode 644 and folders in 755, whatever the umask; there is no symbolic link.
+* `--travail`: everything temporary lives there (the spatial store, the node index, the elevation pyramid, SQLite and
+  GDAL temporary files, the folder being built). It is empty when the command ends, on success and on error; the folder
+  itself stays.
+* `--cache`: kept from one build to the next, and the only thing that is. `relief/` holds the Copernicus tiles (as for
+  `fabriquer`); `osm/` holds each extract under `<first 16 hex digits of the sha256 of its address>-<file name of the
+  address>`. An extract that is in the cache is used **without touching the network**; one that is not is downloaded
+  over HTTPS (redirections out of HTTPS are refused) into a `.part` file of the same folder: status 200, size equal to
+  `Content-Length` when the header is there, a header pyosmium can read, then `os.replace`. Any error removes the
+  `.part` file and fails the build. **To refresh an extract, remove it from the cache.**
+
+Nothing is written outside these three folders and `/tmp`; the network is used for HTTPS only, towards the addresses of
+the descriptor and the Copernicus buckets, never Overpass.
+
+**`FABRIQUE_COMMIT`.** When the environment variable is set it must be 40 lowercase hexadecimal digits (otherwise the
+build is refused before anything is written); the manifest then carries `fabrique: {"commit": <value>, "modifie":
+false}` and Git is never called, so a container needs neither Git nor a `.git` folder. When it is absent the manifest
+asks Git, as `fabriquer` does.
+
+**Progress.** Lines `progression : <step> <n>/<total>` go to the standard output at every change of step, at every
+block (and every row band of the elevation and sea steps), and, whatever happens, at most 20 s after the previous one:
+a heartbeat repeats the step and the elapsed time. They carry no address and no secret. The rest of the log (`[ 12.3 s]
+step`) is unchanged.
+
+**Exit code.** 0 if and only if the output folder is complete, passes the checks of `verifier` and is in place. Any
+other case: non-zero (2 for a refusal or a failure, with `erreur : <message>` on the standard error; 143 when the
+process is terminated, the work folder being emptied first) and `--sortie` absent.
+
+**Dependencies.** `requirements-fabrique.txt` is the closed list of runtime dependencies (every transitive one, each
+pinned with `==` at the version of `requirements.txt`; no browser, no test tool). It installs in a fresh Python 3.12
+virtual environment, x86_64, without any system package:
+
+```
+python3.12 -m venv /opt/fabrique && /opt/fabrique/bin/pip install --no-deps --only-binary :all: -r requirements-fabrique.txt
+```
+
+`requirements.txt` stays the development environment.
+
+**Memory.** The one step whose memory grew with the area, the sea (which pixels of the zoom 10 grid are sea: low
+pixels connected to the border of the extent and holding a seed), runs in row bands: the grids are packed one bit per
+pixel and the labelling is done band by band, so the output is byte-identical to the previous whole-grid computation.
 
 ## The produced folder
 

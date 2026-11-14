@@ -74,23 +74,28 @@ def reglages():
     }
 
 
-def construire(racine, emprise, osm_entrees, relief, polices, nom_emprise, noms=None, execution=None):
+def construire(racine, emprise, osm_entrees, relief, polices, nom_emprise, noms=None, execution=None, commit=None,
+               theatre=None):
     """Rend le manifeste (dict). `emprise` : {fichier, sha256, taille, geometrie}. `noms` : les noms écrits et tus par classe
     (le résultat de la lecture). `execution` : ce qui dépend de la machine ou du découpage (zoom pivot, durée, mémoire) :
-    hors de la partie comparable."""
+    hors de la partie comparable. `commit` : le commit de la fabrique, donné (sinon Git le dit) ; `theatre` : le nom du
+    théâtre (`entrees.theatre`)."""
+    entrees = {
+        "emprise": emprise,
+        "osm": osm_entrees,
+        "relief": [{k: v for k, v in e.items() if k != "fichier"} for e in relief],
+        "polices": polices,
+    }
+    if theatre is not None:
+        entrees["theatre"] = theatre
     return {
         "fabrique_le": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "fabrique": commit_fabrique(racine),
+        "fabrique": commit if commit is not None else commit_fabrique(racine),
         "python": platform.python_version(),
         "dependances": versions(),
         "bibliotheques": bibliotheques(),
         "reglages": reglages(),
-        "entrees": {
-            "emprise": emprise,
-            "osm": osm_entrees,
-            "relief": [{k: v for k, v in e.items() if k != "fichier"} for e in relief],
-            "polices": polices,
-        },
+        "entrees": entrees,
         "noms": noms if noms is not None else {},
         "execution": execution if execution is not None else {},
     }
