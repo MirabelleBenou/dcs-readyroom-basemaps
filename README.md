@@ -49,7 +49,7 @@ python3.12 -m fabrique verifier ../out/
   styles can ask for exists, and how many names were written or left silent per class. It also checks the layout of
   the folder: exactly `fond.pmtiles`, `relief.pmtiles`, `style-clair.json`, `style-sombre.json`, `sprite/`, `glyphs/`,
   `LICENCE.txt` and `manifeste.json` at the root, files in mode 644, folders in 755, no symbolic link, relative
-  addresses only (`pmtiles://./...`, `./...`) for the sources, the sprite and the glyphs of both styles, and a
+  addresses only (`pmtiles://./...`, `./...`, no `..` segment) for the sources, the sprite and the glyphs of both styles, and a
   `fabrique.commit` in the manifest. It exits with 0 or 1.
 
 The extent is a GeoJSON file holding a `Polygon` or a `MultiPolygon` in WGS84; nothing is written outside it.
@@ -62,7 +62,7 @@ launcher in a locked-down container with nobody watching: everything it needs is
 everything it writes goes to three folders you give it.
 
 ```
-python3.12 -m fabrique theatre essai-lattaquie --sortie /run/out/sortie --travail /run/out/travail --cache /var/cache/fonds
+python3.12 -B -m fabrique theatre essai-lattaquie --sortie /run/out/sortie --travail /run/out/travail --cache /var/cache/fonds
 ```
 
 **The descriptor** is `theatres/<name>.json`, read from the code's own tree. The name matches
@@ -77,9 +77,14 @@ is refused):
 
 `theatres/essai-lattaquie.json` is a small test theatre (the 50 x 50 km test square, read from a whole-country extract).
 
+Run it with `python -B` (or `PYTHONDONTWRITEBYTECODE=1`): Python would otherwise try to write `__pycache__` folders into
+the code tree, which a locked-down container keeps read-only.
+
 **The three folders.** Before anything is written the command checks, and refuses with a non-zero exit code and a plain
 message: the descriptor; that `--sortie` does not exist and its parent does; that `--travail` exists and is empty (and
-is on the same file system as the parent of `--sortie`); that `--cache` exists; and `FABRIQUE_COMMIT` if it is set.
+is on the same file system as the parent of `--sortie`); that `--cache` exists; that the three folders do not overlap
+(by real path: `--sortie` is not under `--travail` or `--cache`, and neither of those two is under the other, or the same);
+and the commit (see `FABRIQUE_COMMIT` below).
 
 * `--sortie`: appears at the end, by a single `os.replace` from the work folder, complete and verified. Files are in
   mode 644 and folders in 755, whatever the umask; there is no symbolic link.
@@ -89,24 +94,29 @@ is on the same file system as the parent of `--sortie`); that `--cache` exists; 
 * `--cache`: kept from one build to the next, and the only thing that is. `relief/` holds the Copernicus tiles (as for
   `fabriquer`); `osm/` holds each extract under `<first 16 hex digits of the sha256 of its address>-<file name of the
   address>`. An extract that is in the cache is used **without touching the network**; one that is not is downloaded
-  over HTTPS (redirections out of HTTPS are refused) into a `.part` file of the same folder: status 200, size equal to
+  over HTTPS into a `.part` file of the same folder: status 200, size equal to
   `Content-Length` when the header is there, a header pyosmium can read, then `os.replace`. Any error removes the
   `.part` file and fails the build. **To refresh an extract, remove it from the cache.**
 
 Nothing is written outside these three folders and `/tmp`; the network is used for HTTPS only, towards the addresses of
-the descriptor and the Copernicus buckets, never Overpass.
+the descriptor and the Copernicus buckets, never Overpass. The extracts **and the elevation tiles** are fetched by the
+same opener, which follows no redirection to another host (or port) than the one requested, nor out of HTTPS; a
+redirection to the same host over HTTPS is followed.
 
 **`FABRIQUE_COMMIT`.** When the environment variable is set it must be 40 lowercase hexadecimal digits (otherwise the
 build is refused before anything is written); the manifest then carries `fabrique: {"commit": <value>, "modifie":
 false}` and Git is never called, so a container needs neither Git nor a `.git` folder. When it is absent the manifest
-asks Git, as `fabriquer` does.
+asks Git, as `fabriquer` does, and `theatre` refuses before writing anything if Git does not give a 40-digit commit
+either; the final check requires the manifest to carry such a `fabrique.commit`. (`verifier` alone still accepts
+`"inconnu"`, which a local `fabriquer` writes from an archive without `.git`, and logs a warning.)
 
 **Progress.** Lines `progression : <step> <n>/<total>` go to the standard output at every change of step, at every
 block (and every row band of the elevation and sea steps), and, whatever happens, at most 20 s after the previous one:
 a heartbeat repeats the step and the elapsed time. They carry no address and no secret. The rest of the log (`[ 12.3 s]
 step`) is unchanged.
 
-**Exit code.** 0 if and only if the output folder is complete, passes the checks of `verifier` and is in place. Any
+**Exit code.** 0 if and only if the output folder is complete, passes the checks of `verifier` and is in place. A work folder that is not empty
+after the clean-up is a failure too, even after a successful placement. Any
 other case: non-zero (2 for a refusal or a failure, with `erreur : <message>` on the standard error; 143 when the
 process is terminated, the work folder being emptied first) and `--sortie` absent.
 

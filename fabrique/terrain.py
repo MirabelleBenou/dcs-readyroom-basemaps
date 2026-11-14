@@ -357,7 +357,12 @@ def mer_globale(bas, graine, dedans, hauteur_bande=64):
 
 def dedans_par_bande(grille, emprise_merc):
     """Une fonction `(i0, i1) -> booléens` : les lignes [i0, i1) de l'emprise rastérisée au pixel du zoom 10 (all_touched),
-    fenêtre de la transformation de la grille : la grille entière de l'emprise ne se tient jamais en mémoire."""
+    fenêtre de la transformation de la grille : la grille entière de l'emprise ne se tient jamais en mémoire.
+
+    Au pixel près de la rastérisation de la grille entière, hors d'une arête d'emprise qui passe exactement par un coin de
+    pixel du zoom 10 : l'origine de la fenêtre se calcule par `(oy + i0) * px10`, et GDAL peut alors trancher autrement un
+    contact au bord exact d'un pixel. Aucune emprise réaliste en degrés ne l'a montré, et les empreintes de la zone d'essai
+    et de la grande boîte sont identiques à l'octet."""
     f10 = 1 << (Z_GRILLE - Z_MER)
     w10 = grille.larg // f10
     px10 = merc.pixel(Z_MER)

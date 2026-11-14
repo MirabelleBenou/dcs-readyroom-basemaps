@@ -151,7 +151,8 @@ def sans_fabrication(monkeypatch):
 
 
 def appeler(e, nom="mini", environ=None, **plus):
-    return th.theatre(nom, e["sortie"], e["travail"], e["cache"], racine=e["racine"], environ=environ or {},
+    return th.theatre(nom, e["sortie"], e["travail"], e["cache"], racine=e["racine"],
+                      environ=environ if environ is not None else {"FABRIQUE_COMMIT": COMMIT},
                       progres=Progres(ecrire=lambda l: None, intervalle=60), journal=lambda *a: None, **plus)
 
 
@@ -353,13 +354,58 @@ def test_sans_content_length_la_taille_n_est_pas_exigee(tmp_path):
     assert os.path.getsize(f) == len(brut)
 
 
-def test_une_redirection_hors_https_est_refusee():
-    h = th._RedirectionHttps()
+def redirige(depuis, vers):
     import urllib.request
-    req = urllib.request.Request("https://exemple.invalid/a.osm")
+    h = th._RedirectionMemeHoteHttps()
+    return h.redirect_request(urllib.request.Request(depuis), None, 302, "Found", {}, vers)
+
+
+@pytest.mark.parametrize("vers", ["http://exemple.invalid/b.osm", "https://autre.invalid/b.osm",
+                                  "https://exemple.invalid:8443/b.osm", "https://exemple.invalid.autre.invalid/b.osm",
+                                  "https://moi@autre.invalid/b.osm", "//autre.invalid/b.osm", "ftp://exemple.invalid/b.osm"])
+def test_une_redirection_hors_https_ou_vers_un_autre_hote_est_refusee(vers):
+    import urllib.error
     with pytest.raises(urllib.error.URLError):
-        h.redirect_request(req, None, 302, "Found", {}, "http://exemple.invalid/b.osm")
-    assert h.redirect_request(req, None, 302, "Found", {}, "https://exemple.invalid/b.osm") is not None
+        redirige("https://exemple.invalid/a.osm", vers)
+
+
+@pytest.mark.parametrize("vers", ["https://exemple.invalid/b.osm", "https://EXEMPLE.invalid/b.osm", "/chemin/b.osm", "b.osm",
+                                  "https://exemple.invalid:443/b.osm"])
+def test_une_redirection_vers_le_meme_hote_en_https_est_suivie(vers):
+    assert redirige("https://exemple.invalid/a.osm", vers) is not None
+
+
+def test_les_dalles_passent_par_le_meme_ouvrir_que_les_extraits(espace, monkeypatch, jeu):
+    """`theatre` prépare les dalles lui-même, avec son `ouvrir` (sources.py et fabriquer ne changent pas)."""
+    e = espace
+    os.makedirs(os.path.join(e["cache"], "osm"))
+    shutil.copy(jeu["osm"], th.chemin_osm(e["cache"], URL))
+    vus = []
+
+    def faux(boite, cache, ouvrir=None):
+        vus.append((boite, cache, ouvrir))
+        return entrees_relief(jeu, "d")
+
+    class Stop(Exception):
+        pass
+
+    def stop(*a, **k):
+        vus.append(("fabriquer", a[7]))              # les dalles prêtes, reçues par `_fabriquer`
+        raise Stop()
+    monkeypatch.setattr(th, "preparer_dalles", faux)
+    monkeypatch.setattr(fab, "_fabriquer", stop)
+    with pytest.raises(Stop):
+        appeler(e)
+    assert vus[0][1] == os.path.join(e["cache"], "relief") and vus[0][2] is th.ouvrir_https
+    assert len(vus[0][0]) == 4 and vus[1][0] == "fabriquer" and vus[1][1] and vus[1][1][0]["dalle"]
+    # un `ouvrir` donné à `theatre` est celui des dalles aussi
+    def mien(*a, **k):
+        return None
+    vus.clear()
+    with pytest.raises(Stop):
+        th.theatre("mini", e["sortie"], e["travail"], e["cache"], racine=e["racine"], environ={"FABRIQUE_COMMIT": COMMIT},
+                   progres=Progres(ecrire=lambda l: None, intervalle=60), journal=lambda *a: None, ouvrir=mien)
+    assert vus[0][2] is mien
 
 
 # ---------------------------------------------------------------------- une fabrication complète sur le jeu minuscule
@@ -507,7 +553,7 @@ def test_travail_vide_apres_une_erreur_injectee_au_milieu(jeu, tmp_path, monkeyp
     monkeypatch.setattr(terrain, "construire", casse)
     sortie = str(tmp_path / "dossier" / "sortie")
     with pytest.raises(RuntimeError, match="injectée"):
-        th.theatre("mini", sortie, str(tmp_path / "travail"), str(tmp_path / "cache"), racine=r, environ={},
+        th.theatre("mini", sortie, str(tmp_path / "travail"), str(tmp_path / "cache"), racine=r, environ={"FABRIQUE_COMMIT": COMMIT},
                    journal=lambda *a: None, progres=Progres(ecrire=lambda l: None, intervalle=60),
                    entrees_relief=entrees_relief(jeu, "e"))
     assert os.listdir(tmp_path / "travail") == [] and os.path.isdir(tmp_path / "travail")
@@ -521,7 +567,7 @@ def test_travail_vide_apres_un_echec_du_telechargement(tmp_path):
         (tmp_path / d).mkdir()
     sortie = str(tmp_path / "dossier" / "sortie")
     with pytest.raises(TheatreErreur, match="téléchargement impossible"):
-        th.theatre("mini", sortie, str(tmp_path / "travail"), str(tmp_path / "cache"), racine=r, environ={},
+        th.theatre("mini", sortie, str(tmp_path / "travail"), str(tmp_path / "cache"), racine=r, environ={"FABRIQUE_COMMIT": COMMIT},
                    journal=lambda *a: None, progres=Progres(ecrire=lambda l: None, intervalle=60),
                    ouvrir=lambda req, timeout=None: Reponse(b"x" * 3000, casse=True))
     assert os.listdir(tmp_path / "travail") == [] and not os.path.lexists(sortie)
@@ -539,7 +585,7 @@ def test_la_verification_finale_refuse_un_dossier_qui_ne_passe_pas(jeu, tmp_path
     monkeypatch.setattr(th.ver, "controles", lambda d, j=print: (False, {"echecs": ["panne simulée"]}))
     sortie = str(tmp_path / "dossier" / "sortie")
     with pytest.raises(TheatreErreur, match="panne simulée"):
-        th.theatre("mini", sortie, str(tmp_path / "travail"), str(tmp_path / "cache"), racine=r, environ={},
+        th.theatre("mini", sortie, str(tmp_path / "travail"), str(tmp_path / "cache"), racine=r, environ={"FABRIQUE_COMMIT": COMMIT},
                    journal=lambda *a: None, progres=Progres(ecrire=lambda l: None, intervalle=60),
                    entrees_relief=entrees_relief(jeu, "v"))
     assert not os.path.lexists(sortie) and os.listdir(tmp_path / "travail") == []
@@ -563,7 +609,7 @@ def test_tout_ce_qui_est_temporaire_passe_sous_travail(jeu, tmp_path, monkeypatc
     monkeypatch.setattr(fab, "_fabriquer", espion)
     avant = tempfile.gettempdir(), os.environ.get("TMPDIR")
     th.theatre("mini", str(tmp_path / "dossier" / "sortie"), str(tmp_path / "travail"), str(tmp_path / "cache"), racine=r,
-               environ={}, journal=lambda *a: None, progres=Progres(ecrire=lambda l: None, intervalle=60),
+               environ={"FABRIQUE_COMMIT": COMMIT}, journal=lambda *a: None, progres=Progres(ecrire=lambda l: None, intervalle=60),
                entrees_relief=entrees_relief(jeu, "tmp"))
     assert vus and all(v == (str(tmp_path / "travail" / "tmp"),) * 4 for v in vus)
     assert (tempfile.gettempdir(), os.environ.get("TMPDIR")) == avant, "remis comme avant"
@@ -785,3 +831,184 @@ def test_les_modules_de_la_fabrique_n_importent_que_la_liste():
                 if m in stdlib or m == "fabrique":
                     continue
                 assert paquets_de.get(m, set()) & set(run), "%s (importé par fabrique/%s) n'est fourni par aucun paquet de requirements-fabrique.txt" % (m, f)
+
+
+# ---------------------------------------------------------------------- l'addendum : expressions, recouvrements, commit, restes
+def avec_osm(e, jeu):
+    os.makedirs(os.path.join(e["cache"], "osm"), exist_ok=True)
+    shutil.copy(jeu["osm"], th.chemin_osm(e["cache"], URL))
+
+
+def lancer(e, jeu, nom_dalles, **plus):
+    return th.theatre("mini", e["sortie"], e["travail"], e["cache"], racine=e["racine"], environ={"FABRIQUE_COMMIT": COMMIT},
+                      journal=lambda *a: None, progres=Progres(ecrire=lambda l: None, intervalle=60),
+                      entrees_relief=entrees_relief(jeu, nom_dalles), **plus)
+
+
+def test_les_expressions_se_valident_en_entier_un_saut_de_ligne_final_est_refuse(espace, sans_fabrication, tmp_path):
+    refuse(espace, "FABRIQUE_COMMIT", environ={"FABRIQUE_COMMIT": COMMIT + "\n"})
+    refuse(espace, "FABRIQUE_COMMIT", environ={"FABRIQUE_COMMIT": "\n" + COMMIT})
+    assert th.commit_donne({"FABRIQUE_COMMIT": COMMIT}) == {"commit": COMMIT, "modifie": False}
+    for nom in ("mini\n", "mini\n\n"):
+        with pytest.raises(TheatreErreur, match="nom de théâtre invalide"):
+            charger_descripteur(nom, espace["racine"])
+    assert th.FICHIER_URL.fullmatch("a.osm\n") is None and th.FICHIER_URL.fullmatch("a.osm")
+    r = racine_factice(tmp_path / "x", {"mini": valide(osm=["https://exemple.invalid/mini.osm\n"])})
+    with pytest.raises(TheatreErreur):
+        charger_descripteur("mini", r)
+
+
+def test_les_trois_dossiers_ne_se_recouvrent_pas(espace, sans_fabrication):
+    e, tmp = espace, espace["tmp"]
+    # --sortie sous --travail, sous --cache
+    os.makedirs(tmp / "travail" / "dedans")
+    refuse(dict(e, sortie=str(tmp / "travail" / "dedans" / "sortie")), "--sortie est sous --travail")
+    refuse(dict(e, sortie=str(tmp / "travail" / "sortie")), "--sortie est sous --travail")
+    os.makedirs(tmp / "cache" / "dedans")
+    refuse(dict(e, sortie=str(tmp / "cache" / "dedans" / "sortie")), "--sortie est sous --cache")
+    # --travail sous --cache, --cache sous --travail, égaux
+    refuse(dict(e, travail=str(tmp / "cache" / "dedans")), "se recouvrent")
+    refuse(dict(e, cache=str(tmp / "travail" / "dedans")), "se recouvrent")
+    refuse(dict(e, cache=e["travail"]), "se recouvrent")
+    refuse(dict(e, travail=e["cache"]), "se recouvrent")
+    # un lien ne contourne rien : le chemin réel de --sortie
+    os.symlink(str(tmp / "travail"), str(tmp / "dossier" / "lien"))
+    refuse(dict(e, sortie=str(tmp / "dossier" / "lien" / "sortie")), "--sortie est sous --travail")
+    os.symlink(str(tmp / "cache"), str(tmp / "lien-cache"))
+    refuse(dict(e, travail=str(tmp / "lien-cache" / "dedans")), "se recouvrent")
+    # des dossiers frères dont un nom en préfixe de l'autre ne se recouvrent pas
+    os.makedirs(tmp / "cache2")
+    assert not th._sous(str(tmp / "cache2"), str(tmp / "cache"))
+
+
+def test_le_commit_nomme_avant_toute_ecriture(espace, sans_fabrication, monkeypatch):
+    git = {"commit": "inconnu", "modifie": None}
+    monkeypatch.setattr(th.manifeste, "commit_fabrique", lambda racine: git)
+    refuse(espace, "pas de commit nomm", environ={})
+    git.update(commit="ABCDEF" * 6 + "abcd")                                       # majuscules : refusé
+    refuse(espace, "pas de commit nomm", environ={})
+    git.update(commit=COMMIT + "\n")
+    refuse(espace, "pas de commit nomm", environ={})
+    git.update(commit=COMMIT, modifie=True)
+    assert th.commit_a_ecrire({}) == {"commit": COMMIT, "modifie": True}               # Git suffit
+    assert th.commit_a_ecrire({"FABRIQUE_COMMIT": "f" * 40}) == {"commit": "f" * 40, "modifie": False}
+
+
+def test_le_controle_final_exige_un_commit_de_40_hexadecimaux(espace, jeu, monkeypatch):
+    e = espace
+    avec_osm(e, jeu)
+    vrai = fab._fabriquer
+
+    def inconnu(*a, **k):
+        k["commit"] = {"commit": "inconnu", "modifie": None}
+        return vrai(*a, **k)
+    monkeypatch.setattr(fab, "_fabriquer", inconnu)
+    with pytest.raises(TheatreErreur, match="fabrique.commit de 40"):
+        lancer(e, jeu, "c1")
+    assert not os.path.lexists(e["sortie"]) and os.listdir(e["travail"]) == []
+
+
+def test_verifier_accepte_inconnu_avec_un_avertissement(copie):
+    p = os.path.join(copie, "manifeste.json")
+    m = json.load(open(p))
+    m["fabrique"] = {"commit": "inconnu", "modifie": None}
+    json.dump(m, open(p, "w"))
+    os.chmod(p, 0o644)
+    lignes = []
+    ok, res = controles(copie, journal=lignes.append)
+    assert ok, res["echecs"]
+    assert any(l.startswith("AVERTISSEMENT") and "inconnu" in l for l in lignes) and res["avertissements"]
+    assert cli.principal(["verifier", copie]) == 0
+
+
+def test_un_dossier_de_travail_qui_garde_des_restes_est_un_echec_meme_apres_le_placement(espace, jeu, monkeypatch):
+    e = espace
+    avec_osm(e, jeu)
+    monkeypatch.setattr(th, "vider", lambda d: None)
+    with pytest.raises(TheatreErreur, match="--travail n'est pas vide après le nettoyage"):
+        lancer(e, jeu, "c2")
+    assert os.path.isdir(e["sortie"]), "la sortie est bien placée : c'est le travail qui échoue"
+    assert os.listdir(e["travail"])
+
+
+def test_le_cli_ecrit_les_restes_sur_la_sortie_d_erreur_et_sort_non_nul(espace, monkeypatch, capsys):
+    def reste(*a, **k):
+        raise TheatreErreur("--travail n'est pas vide après le nettoyage (1 entrées : x)")
+    monkeypatch.setattr(th, "theatre", reste)
+    e = espace
+    code = cli.principal(["theatre", "mini", "--sortie", e["sortie"], "--travail", e["travail"], "--cache", e["cache"]])
+    assert code == 2 and "erreur : --travail n'est pas vide après le nettoyage" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("adresse", ["./../fond.pmtiles", "pmtiles://./../fond.pmtiles", "./a/../../b", "./%2e%2e/x",
+                                     "./%2E%2E/x", "./sprite/..", "./..\\x"])
+def test_verifier_refuse_un_segment_point_point(copie, adresse):
+    ecrire_style(copie, "style-clair.json", lambda s: s.__setitem__("sprite", adresse))
+    assert any("style clair : adresse non relative : sprite" in e for e in echecs(copie))
+    ecrire_style(copie, "style-sombre.json", lambda s: s["sources"]["fond"].__setitem__("url", adresse))
+    assert any("style sombre : adresse non relative : source fond" in e for e in echecs(copie))
+
+
+def test_verifier_garde_les_adresses_relatives_a_point_dans_un_nom(copie):
+    ecrire_style(copie, "style-clair.json", lambda s: s.__setitem__("sprite", "./sprite/papier..v2"))
+    ok, res = controles(copie, journal=lambda *a: None)
+    assert ok, res["echecs"]
+
+
+def test_theatre_complet_en_sous_processus_home_vide_arbre_en_lecture_seule(espace, jeu):
+    """Le jeu minuscule par `python -B`, dans un sous-processus : `HOME` et l'arbre du code inchangés, `--travail` vide,
+    jamais `fabrique.overpass`. Sous root, la commande est lancée sous l'uid 65534 (root ignore les droits d'écriture)."""
+    import tempfile
+    from conftest import emprise_geojson as eg
+    base = tempfile.mkdtemp(prefix="theatre-sp-")
+    try:
+        os.chmod(base, 0o755)
+        code = os.path.join(base, "code")
+        shutil.copytree(RACINE, code, ignore=shutil.ignore_patterns(".git", "node_modules", "__pycache__", "*.pyc",
+                                                                    ".pytest_cache", "venv", ".venv"))
+        eg(os.path.join(code, "zones", "e.geojson"))
+        with open(os.path.join(code, "theatres", "mini.json"), "w") as f:
+            json.dump(valide(), f)
+        e = {n: os.path.join(base, n) for n in ("parent", "travail", "cache", "home")}
+        for n in e.values():
+            os.makedirs(n)
+        os.makedirs(os.path.join(e["cache"], "osm"))
+        os.makedirs(os.path.join(e["cache"], "relief"))
+        shutil.copy(jeu["osm"], th.chemin_osm(e["cache"], URL))
+        for ent in entrees_relief(jeu, "sp"):                                      # un cache de dalles complet : aucun réseau
+            shutil.copy(ent["fichier"], os.path.join(e["cache"], "relief"))
+        for r, ds, fs in os.walk(base):
+            for n in ds + fs:
+                os.chmod(os.path.join(r, n), 0o755 if os.path.isdir(os.path.join(r, n)) else 0o644)
+        subprocess.run(["chmod", "-R", "a-w", code], check=True)
+        noeuds = {}
+        for r, ds, fs in os.walk(code):
+            for n in ds + fs:
+                noeuds[os.path.join(r, n)] = os.lstat(os.path.join(r, n)).st_mtime_ns
+        kw = {}
+        if os.geteuid() == 0:
+            for n in ("parent", "travail", "cache", "home"):
+                subprocess.run(["chown", "-R", "65534:65534", e[n]], check=True)
+            kw["preexec_fn"] = lambda: (os.setgid(65534), os.setuid(65534))
+        script = ("import sys; from fabrique import cli; "
+                  "c = cli.principal(['theatre', 'mini', '--sortie', %r, '--travail', %r, '--cache', %r]); "
+                  "print('OVERPASS-CHARGE' if 'fabrique.overpass' in sys.modules else 'OVERPASS-ABSENT'); sys.exit(c)"
+                  % (os.path.join(e["parent"], "sortie"), e["travail"], e["cache"]))
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": e["home"], "FABRIQUE_COMMIT": COMMIT}
+        r = subprocess.run([sys.executable, "-B", "-c", script], cwd=code, env=env, capture_output=True, text=True, **kw)
+        assert r.returncode == 0, r.stderr + r.stdout[-2000:]
+        assert "OVERPASS-ABSENT" in r.stdout and "OVERPASS-CHARGE" not in r.stdout
+        assert "progression : terminé" in r.stdout
+        assert os.listdir(e["home"]) == [] and os.listdir(e["travail"]) == []
+        apres = {}
+        for rr, ds, fs in os.walk(code):
+            for n in ds + fs:
+                apres[os.path.join(rr, n)] = os.lstat(os.path.join(rr, n)).st_mtime_ns
+        assert apres == noeuds, "l'arbre du code est inchangé"
+        ok, res = controles(os.path.join(e["parent"], "sortie"), journal=lambda *a: None)
+        assert ok, res["echecs"]
+        m = json.load(open(os.path.join(e["parent"], "sortie", "manifeste.json")))
+        assert m["fabrique"] == {"commit": COMMIT, "modifie": False} and m["entrees"]["theatre"] == "mini"
+    finally:
+        subprocess.run(["chmod", "-R", "u+w", base])
+        shutil.rmtree(base, ignore_errors=True)

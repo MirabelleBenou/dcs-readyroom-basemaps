@@ -177,16 +177,43 @@ def test_generateur_synthetique_reduit_egale_la_base(graine_gen):
     assert not attendu[(r0 + r1) // 2, (c0 + c1) // 2]
 
 
-def test_dedans_par_bande_egale_la_rasterisation_entiere():
-    """La fenêtre d'une bande donne les mêmes pixels que la rastérisation de toute la grille."""
+def _polygone_a_cotes_subdivises(lon0, lat0, lon1, lat1, n=21):
+    """Un rectangle dont chaque côté porte n sommets (comme `zones/lattaquie.geojson`), en degrés."""
+    from shapely.geometry import Polygon
+    t = np.linspace(0.0, 1.0, n, endpoint=False)
+    pts = ([(lon0 + (lon1 - lon0) * u, lat0) for u in t] + [(lon1, lat0 + (lat1 - lat0) * u) for u in t]
+           + [(lon1 - (lon1 - lon0) * u, lat1) for u in t] + [(lon0, lat1 - (lat1 - lat0) * u) for u in t])
+    return Polygon(pts)
+
+
+def _emprises_realistes():
+    from shapely.geometry import box, Polygon
+    rng = np.random.default_rng(5)
+    out = []
+    for _ in range(8):                                              # des rectangles aux coins au dixième de degré
+        lon0, lat0 = rng.integers(300, 440), rng.integers(310, 380)
+        out.append(box(lon0 / 10, lat0 / 10, (lon0 + rng.integers(2, 12)) / 10, (lat0 + rng.integers(2, 12)) / 10))
+    out.append(box(44.6, 36.0, 45.0, 36.5))                         # un bord vertical sur 45 degrés Est
+    out.append(box(45.0, 35.2, 45.4, 35.7))
+    out.append(_polygone_a_cotes_subdivises(35.75, 35.2, 36.25, 35.65))                 # comme la zone d'essai
+    out.append(_polygone_a_cotes_subdivises(35.0, 34.0, 37.0, 36.0))
+    out.append(Polygon([(35.0, 35.0), (36.2, 35.1), (36.1, 36.0), (35.4, 36.3)]))
+    return out
+
+
+@pytest.mark.parametrize("k", range(13))
+def test_dedans_par_bande_egale_la_rasterisation_entiere_sur_des_emprises_realistes(k):
+    """Ce que cela prouve : sur des emprises en degrés (rectangles au dixième de degré, bord sur 45 deg E, polygones à 21
+    sommets par côté), la rastérisation par bandes du zoom 10 donne les mêmes pixels que celle de la grille entière, à toutes
+    les hauteurs de bande. Ce que cela ne prouve pas : une arête qui passe exactement par un coin de pixel du zoom 10 peut
+    différer d'un pixel (règle 8 : « au pixel près, hors d'une telle arête »)."""
     from rasterio.features import rasterize
     from rasterio.transform import from_origin
     from shapely.geometry import Polygon
     from fabrique import merc
-    em = Polygon([(35.0, 35.0), (36.2, 35.1), (36.1, 36.0), (35.4, 36.3)])
-    x, y = merc.lonlat_vers_merc(np.array(em.exterior.coords)[:, 0], np.array(em.exterior.coords)[:, 1])
-    from shapely.geometry import Polygon as P
-    em_m = P(np.column_stack([x, y]))
+    em_wgs = _emprises_realistes()[k]
+    xs, ys = merc.lonlat_vers_merc(np.array(em_wgs.exterior.coords)[:, 0], np.array(em_wgs.exterior.coords)[:, 1])
+    em_m = Polygon(np.column_stack([xs, ys]))
     g = terrain.Grille(em_m.bounds)
     f10 = 1 << (terrain.Z_GRILLE - terrain.Z_MER)
     h10, w10 = g.haut // f10, g.larg // f10
@@ -194,8 +221,9 @@ def test_dedans_par_bande_egale_la_rasterisation_entiere():
     ox, oy, _, _ = g.niveau(terrain.Z_MER)
     tr = from_origin(-merc.DEMI_MONDE + ox * px10, merc.DEMI_MONDE - oy * px10, px10, px10)
     plein = rasterize([(em_m, 1)], out_shape=(h10, w10), transform=tr, fill=0, all_touched=True, dtype="uint8").astype(bool)
+    assert plein.any()
     f = terrain.dedans_par_bande(g, em_m)
     for pas in (1, 7, 64, h10):
         for i0 in range(0, h10, pas):
             i1 = min(h10, i0 + pas)
-            assert (f(i0, i1) == plein[i0:i1]).all()
+            assert (f(i0, i1) == plein[i0:i1]).all(), (k, pas, i0)

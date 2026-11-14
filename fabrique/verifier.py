@@ -3,7 +3,9 @@ import gzip
 import io
 import json
 import os
+import re
 import stat
+import urllib.parse
 
 import mapbox_vector_tile
 import numpy as np
@@ -67,9 +69,11 @@ def gabarit(dossier):
 
 
 def _adresse_relative(texte):
-    """Une adresse du style : `./…` ou `pmtiles://./…`, jamais absolue (`/…`), jamais d'autre `://`."""
+    """Une adresse du style : `./…` ou `pmtiles://./…`, jamais absolue (`/…`), jamais d'autre `://`, jamais un segment `..`
+    (même codé en pourcentage)."""
     reste = texte[len("pmtiles://"):] if texte.startswith("pmtiles://") else texte
-    return reste.startswith("./") and "://" not in reste
+    segments = urllib.parse.unquote(reste).replace("\\", "/").split("/")
+    return reste.startswith("./") and "://" not in reste and ".." not in segments
 
 
 def adresses_relatives(style):
@@ -154,6 +158,9 @@ def controles(dossier, journal=print):
             or not m["fabrique"]["commit"]:
         echec("manifeste.json ne nomme pas de fabrique.commit")
         return False, res
+    if not re.fullmatch(r"[0-9a-f]{40}", m["fabrique"]["commit"]):
+        res["avertissements"] = ["fabrique.commit n'est pas un commit de 40 hexadécimaux : %r" % m["fabrique"]["commit"]]
+        journal("AVERTISSEMENT : " + res["avertissements"][0])
     for t in ("clair", "sombre"):
         with open(os.path.join(dossier, "style-%s.json" % t), encoding="utf-8") as f:
             for mauvaise in adresses_relatives(json.load(f)):
