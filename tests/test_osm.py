@@ -115,3 +115,34 @@ def test_ruisseau_filtre_apres_le_recollage(tmp_path):
     p2.write_text('<?xml version="1.0" encoding="UTF-8"?>\n<osm version="0.6">\n' + "\n".join(nodes[:2] + ways[:1]) + "\n</osm>\n")
     d2, _ = lire_osm(str(p2), tmp_path / "t2")
     assert d2["cours_eau"] == []
+
+
+def test_une_aire_dont_la_geometrie_ne_se_construit_pas_est_ignoree_et_journalee(tmp_path):
+    """Un multipolygone dont le seul chemin `outer` n'est pas fermé n'arrête pas la lecture : il est ignoré, le journal le dit."""
+    from shapely.geometry import box
+    from fabrique.magasin import Magasin
+    from fabrique.couches import ENTITES
+    pts = {1: (36.000, 35.420), 2: (36.010, 35.420), 3: (36.010, 35.430), 4: (36.000, 35.430),    # le chemin ouvert
+           5: (36.015, 35.435), 6: (36.025, 35.435), 7: (36.025, 35.445), 8: (36.015, 35.445)}     # la forêt
+    noeuds = "".join('<node id="%d" lat="%.6f" lon="%.6f"/>' % (i, lat, lon) for i, (lon, lat) in pts.items())
+    xml = ('<?xml version="1.0" encoding="UTF-8"?>\n<osm version="0.6" generator="essai">' + noeuds +
+           '<way id="20"><nd ref="1"/><nd ref="2"/><nd ref="3"/><nd ref="4"/></way>'
+           '<way id="21"><nd ref="5"/><nd ref="6"/><nd ref="7"/><nd ref="8"/><nd ref="5"/><tag k="landuse" v="forest"/></way>'
+           '<relation id="500"><member type="way" ref="20" role="outer"/><tag k="type" v="multipolygon"/>'
+           '<tag k="landuse" v="residential"/></relation></osm>')
+    p = tmp_path / "m.osm"
+    p.write_text(xml, encoding="utf-8")
+    x0, y0 = merc.lonlat_vers_merc(35.9, 35.3)
+    x1, y1 = merc.lonlat_vers_merc(36.1, 35.5)
+    travail = tmp_path / "t"
+    os.makedirs(str(travail))
+    mg = Magasin(os.path.join(str(travail), "m.sqlite"))
+    lignes = []
+    osm.charger([str(p)], mg, box(float(x0), float(y0), float(x1), float(y1)), str(travail), journal=lignes.append)
+    d = {c: list(mg.entites(c)) for c in ENTITES}
+    zones = mg.db.execute("SELECT count(*) FROM zone").fetchone()[0]
+    mg.fermer()
+    assert [i for i, _, _ in d["forets"]] == ["w21"]
+    assert zones == 0
+    assert len([l for l in lignes if l.startswith("aire ignorée : r500 (")]) == 1
+    assert lignes[-1] == "aires ignorées : 1"

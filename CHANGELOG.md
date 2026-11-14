@@ -19,3 +19,6 @@ All notable changes to this project are documented here. Versions follow semanti
 ### Changed
 - Sea connectivity is computed in row bands: memory at that step no longer grows with the area; outputs are byte-identical.
 - `verifier` also checks the output folder's layout, file modes and relative URLs.
+
+### Fixed
+- An area whose geometry cannot be built from an OpenStreetMap extract (a broken multipolygon, missing node locations) is skipped and logged instead of stopping the build.

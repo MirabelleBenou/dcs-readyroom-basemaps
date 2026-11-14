@@ -55,8 +55,7 @@ def _coords(o):
     return np.column_stack([x, y]), refs[0], refs[-1]
 
 
-def _polygone(a):
-    wkb = osmium.geom.WKBFactory().create_multipolygon(a)
+def _polygone(wkb):
     g = shapely.from_wkb(bytes.fromhex(wkb) if isinstance(wkb, str) else wkb)
     g = shapely.transform(g, lambda c: np.column_stack(lonlat_vers_merc(c[:, 0], c[:, 1])))
     if not g.is_valid:
@@ -90,6 +89,7 @@ def charger(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print
     texte (un nom dont un caractère manque aux deux polices ne s'écrit pas). Rend une `Lecture`."""
     lecture = Lecture()
     boite = emprise_merc.bounds
+    ignorees = 0
     shapely.prepare(emprise_merc)
     for i, chemin in enumerate(fichiers):
         index = os.path.join(travail, "noeuds-%d.idx" % i)
@@ -122,7 +122,14 @@ def charger(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print
                        or t.get("natural") == "wood", t.get("landuse") == "residential")
                 if not any(cle):
                     continue
-                g = _polygone(o)
+                try:
+                    wkb = osmium.geom.WKBFactory().create_multipolygon(o)
+                except (RuntimeError, osmium.InvalidLocationError) as e:
+                    # une aire que pyosmium n'a pas pu fermer (multipolygone cassé, position de nœud manquante) : ignorée
+                    ignorees += 1
+                    journal("aire ignorée : %s (%s)" % (ident, e))
+                    continue
+                g = _polygone(wkb)
                 if g is None or not _touche(boite, g):
                     continue
                 if cle[0]:
@@ -158,6 +165,8 @@ def charger(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print
                         magasin.ajouter("pistes", "w%d" % ident, {}, l)
                     else:
                         magasin.ajouter_brut(groupe, ident, n0, n1, props, l)
+    if ignorees:
+        journal("aires ignorées : %d" % ignorees)
     magasin.valider()
     return lecture
 
