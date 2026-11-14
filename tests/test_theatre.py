@@ -553,11 +553,12 @@ def test_tout_ce_qui_est_temporaire_passe_sous_travail(jeu, tmp_path, monkeypatc
         (tmp_path / d).mkdir()
     (tmp_path / "cache" / "osm").mkdir()
     shutil.copy(jeu["osm"], th.chemin_osm(str(tmp_path / "cache"), URL))
-    vus = []
+    vus, gdal = [], []
     vrai = fab._fabriquer
 
     def espion(*a, **k):
         vus.append((tempfile.gettempdir(), os.environ["TMPDIR"], os.environ["SQLITE_TMPDIR"], os.environ["CPL_TMPDIR"]))
+        gdal.append(os.environ["GDAL_CACHEMAX"])
         return vrai(*a, **k)
     monkeypatch.setattr(fab, "_fabriquer", espion)
     avant = tempfile.gettempdir(), os.environ.get("TMPDIR")
@@ -566,6 +567,7 @@ def test_tout_ce_qui_est_temporaire_passe_sous_travail(jeu, tmp_path, monkeypatc
                entrees_relief=entrees_relief(jeu, "tmp"))
     assert vus and all(v == (str(tmp_path / "travail" / "tmp"),) * 4 for v in vus)
     assert (tempfile.gettempdir(), os.environ.get("TMPDIR")) == avant, "remis comme avant"
+    assert gdal == [th.CACHE_GDAL_MIO] and "GDAL_CACHEMAX" not in os.environ        # le cache de GDAL borné, puis retiré
 
 
 # ---------------------------------------------------------------------- `fabriquer` : les droits aussi

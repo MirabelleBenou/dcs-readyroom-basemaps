@@ -9,7 +9,7 @@ import mapbox_vector_tile
 import numpy as np
 import shapely
 from PIL import Image
-from pmtiles.reader import MmapSource, all_tiles
+from pmtiles.reader import all_tiles
 from pmtiles.tile import Compression, deserialize_header
 from rasterio.features import rasterize
 from rasterio.transform import from_origin
@@ -94,11 +94,20 @@ def en_tete(chemin):
         return deserialize_header(f.read(127))
 
 
+def _lecture(f):
+    """Une source d'octets pour `pmtiles.reader` par `seek` et `read` : jamais le fichier projeté en mémoire (le relief d'un
+    théâtre pèse plus d'un gigaoctet, et des pages projetées comptent dans la mémoire du processus tant qu'on les lit)."""
+    def get_bytes(offset, length):
+        f.seek(offset)
+        return f.read(length)
+    return get_bytes
+
+
 def lire_tuiles(chemin):
     """Les tuiles d'un PMTiles, une à une (un générateur : rien n'est gardé) : (z, x, y, octets décompressés).
     Un PMTiles sans tuile n'en donne aucune."""
     with open(chemin, "rb") as f:
-        src = MmapSource(f)
+        src = _lecture(f)
         h = deserialize_header(src(0, 127))
         if h["tile_entries_count"] == 0:
             return

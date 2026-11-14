@@ -238,9 +238,13 @@ def verifier_avant_d_ecrire(desc_nom, sortie, travail, cache, environ, racine):
     return desc, commit
 
 
+CACHE_GDAL_MIO = "64"       # le cache de blocs de GDAL : 5 % de la mémoire de la machine par défaut, ici borné et fixe
+
+
 class _Temporaires:
-    """Tout ce qui est temporaire passe sous `--travail` : `tempfile`, SQLite, GDAL. Remis comme avant en sortant."""
-    VARIABLES = ("TMPDIR", "SQLITE_TMPDIR", "CPL_TMPDIR")
+    """Tout ce qui est temporaire passe sous `--travail` : `tempfile`, SQLite, GDAL. Le cache de blocs de GDAL est borné
+    (sauf si `GDAL_CACHEMAX` est posée) : la mémoire ne dépend pas de celle de la machine. Remis comme avant en sortant."""
+    VARIABLES = ("TMPDIR", "SQLITE_TMPDIR", "CPL_TMPDIR", "GDAL_CACHEMAX")
 
     def __init__(self, dossier):
         self.dossier = dossier
@@ -250,7 +254,10 @@ class _Temporaires:
         self.avant = (tempfile.tempdir, {v: os.environ.get(v) for v in self.VARIABLES})
         tempfile.tempdir = self.dossier
         for v in self.VARIABLES:
-            os.environ[v] = self.dossier
+            if v == "GDAL_CACHEMAX":
+                os.environ.setdefault(v, CACHE_GDAL_MIO)
+            else:
+                os.environ[v] = self.dossier
         return self
 
     def __exit__(self, *exc):
