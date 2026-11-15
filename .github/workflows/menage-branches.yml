@@ -1,0 +1,57 @@
+# Le ménage des branches, en action GitHub planifiée — MODÈLE commun à tous les dépôts du projet.
+#
+# À copier dans `.github/workflows/menage-branches.yml` du dépôt, puis à adapter : la variable SCRIPT du bloc `env:`
+# (le chemin de `menage_branches.py` dans le dépôt) et, si besoin, DELAI_JOURS, et rien d'autre.
+#
+# Ce qu'il fait, chaque jour à 4 h 23 UTC (avant l'arbitre de 5 h 42) ou à la main (« Run workflow ») :
+#   1. il récupère le dépôt en entier (fetch-depth: 0 : « git cherry » a besoin de tout l'historique) ;
+#   2. il lance `menage_branches.py`, qui supprime chaque branche FINIE dont le dernier commit a DELAI_JOURS jours au
+#      moins, et jamais une autre (règle complète : l'en-tête du script). Il n'y a jamais de suppression de main, de la
+#      branche par défaut, ni d'une branche protégée ; sans réponse de l'API des branches protégées, rien n'est supprimé ;
+#   3. il met le tableau des décisions (branche, âge, décision, raison) dans la page du passage.
+# Lancée à la main, l'action est en ESSAI par défaut (case « essai » cochée : rien n'est supprimé) ; décochée, elle
+# supprime pour de bon. Le passage planifié, lui, supprime.
+# L'action n'ÉCHOUE que si le ménage est en panne (dépôt illisible, API muette, suppression refusée par GitHub) :
+# l'e-mail d'échec de GitHub veut dire « panne », comme pour l'arbitre (R456). Aucun jeton de modèle, aucun secret :
+# le seul droit demandé est d'écrire dans le dépôt (`contents: write`, pour supprimer des branches).
+name: menage-branches
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+    inputs:
+      essai:
+        description: "Essai : mêmes décisions, rien n'est supprimé (décocher pour supprimer pour de bon)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: menage-branches
+  cancel-in-progress: false
+
+env:
+  SCRIPT: outils/menage_branches.py
+  DELAI_JOURS: "7"
+
+jobs:
+  menage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Ménage des branches
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ESSAI: ${{ github.event_name == 'workflow_dispatch' && inputs.essai || 'false' }}
+        run: |
+          args=(--delai-jours "$DELAI_JOURS")
+          if [ "$ESSAI" = "true" ]; then args+=(--essai); fi
+          python3 -B "$SCRIPT" "${args[@]}"
