@@ -196,6 +196,12 @@ Chromium is taken from `/opt/pw-browsers` (or `CHROMIUM_PATH`); WebGL runs throu
 `essais/comparer.py <A> <B>` compares two produced folders file by file (the manifest by its comparable part).
 Run the tests with `python3.12 -m pytest -q`.
 
+## Publishing a release (maintainers)
+
+Releases are created by the workflow `.github/workflows/release.yml`, not by hand. On `main`, the `Unreleased` section of the CHANGELOG is first renamed to the new version (`## x.y.z - YYYY-MM-DD`). Then a branch `release/v<x.y.z>` is pushed: that `main` commit plus files under `.release/` only — `notes.md` (the release text), any files to attach under `assets/` (most releases have none; a file over 100 MB, the limit of a git push, is pushed in parts `<name>.part001`, `<name>.part002`… that the workflow joins), and last `manifest.json` (tag, title, `main` commit, and the name, size and SHA-256 of each attached file).
+
+The workflow checks all of it, creates the release with its files, publishes it as the latest release (which creates the tag on the `main` commit) and deletes the branch. If anything fails, nothing stays published and the branch gets `.release/FAILED.md` with the reason. A branch `release/essai-<name>` runs the same checks without publishing anything and writes `.release/CHECK.md`.
+
 ## Sources and licences
 
 * Map data © OpenStreetMap contributors, available under the Open Database License (ODbL) v1.0,

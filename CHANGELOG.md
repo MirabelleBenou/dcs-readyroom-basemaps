@@ -4,6 +4,9 @@ All notable changes to this project are documented here. Versions follow semanti
 
 ## Unreleased
 
+### Added
+- Releases are published by a workflow: pushing a branch `release/v<x.y.z>` with the release text and a manifest (and any files to attach) creates the release and its tag. The basemap factory does not change.
+
 ## 0.1.0 - 2026-11-14
 
 ### Added
