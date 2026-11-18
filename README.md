@@ -118,9 +118,13 @@ and the commit (see `FABRIQUE_COMMIT` below).
   `.part` file and fails the build. **To refresh an extract, remove it from the cache.**
 
 Nothing is written outside these three folders and `/tmp`; the network is used for HTTPS only, towards the addresses of
-the descriptor and the Copernicus buckets, never Overpass. The extracts **and the elevation tiles** are fetched by the
-same opener, which follows no redirection to another host (or port) than the one requested, nor out of HTTPS; a
-redirection to the same host over HTTPS is followed.
+the descriptor and the Copernicus buckets, never Overpass. **The extracts** follow a redirection to a mirror on another
+host, provided it stays on HTTPS, on port 443 and without credentials in the address; any other redirection is refused. An
+extract served by another host than the one of its address is kept only if its MD5 matches the checksum that the original
+host publishes next to it (`<address>.md5`, read without following any redirection to another host); otherwise the build
+stops, and the log says `progression : extraits OpenStreetMap : <name> servi par <host>, MD5 vérifié` when it passes. **The
+elevation tiles** follow no redirection to another host (or port), nor out of HTTPS; a redirection to the same host over
+HTTPS is followed.
 
 **`FABRIQUE_COMMIT`.** When the environment variable is set it must be 40 lowercase hexadecimal digits (otherwise the
 build is refused before anything is written); the manifest then carries `fabrique: {"commit": <value>, "modifie":

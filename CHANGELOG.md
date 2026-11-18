@@ -4,6 +4,9 @@ All notable changes to this project are documented here. Versions follow semanti
 
 ## Unreleased
 
+### Fixed
+- A theatre build now follows the redirection of an OpenStreetMap extract to a mirror on another host (HTTPS only), and keeps the file only if it matches the MD5 checksum that the original host publishes next to the extract (`<address>.md5`); the build stops otherwise. Elevation tiles still follow no redirection to another host.
+
 ## 0.2.0 - 2026-11-18
 
 ### Added

@@ -229,6 +229,33 @@ def ouvrir_https(req, timeout=None):
     return urllib.request.build_opener(_RedirectionMemeHoteHttps).open(req, timeout=timeout)
 
 
+class _RedirectionExtraitHttps(urllib.request.HTTPRedirectHandler):
+    """Pour les extraits OSM : suit une redirection vers un autre hôte (un miroir), à condition qu'elle reste en HTTPS, sans
+    identifiants dans l'adresse et sur le port 443. Toute autre redirection est refusée, et le message la nomme."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        nouvelle = urllib.parse.urljoin(req.full_url, newurl)
+        if not nouvelle.startswith("https://"):
+            raise urllib.error.URLError("redirection vers une adresse qui n'est pas en HTTPS : refusée")
+        p = urllib.parse.urlsplit(nouvelle)
+        try:
+            port = p.port
+        except ValueError:
+            port = -1
+        if "@" in p.netloc or p.username is not None or p.password is not None:
+            raise urllib.error.URLError("redirection vers une adresse avec identifiants (%s) : refusée" % (p.hostname or "?"))
+        if port not in (None, 443):
+            raise urllib.error.URLError("redirection vers un autre port (%s) : refusée" % (p.hostname or "?"))
+        if not p.hostname:
+            raise urllib.error.URLError("redirection vers une adresse sans hôte : refusée")
+        return super().redirect_request(req, fp, code, msg, headers, nouvelle)
+
+
+def ouvrir_extrait(req, timeout=None):
+    """`urlopen` des extraits OSM : suit une redirection vers un autre hôte en HTTPS (port 443, sans identifiants)."""
+    return urllib.request.build_opener(_RedirectionExtraitHttps).open(req, timeout=timeout)
+
+
 def chemin_osm(cache, url):
     """`osm/<16 premiers hexadécimaux du sha256 de l'adresse>-<nom de fichier de l'adresse>` sous le cache."""
     return os.path.join(cache, "osm", "%s-%s" % (hashlib.sha256(url.encode("utf-8")).hexdigest()[:16],
@@ -251,23 +278,58 @@ def en_tete_lisible(chemin, nom):
         lecteur.close()
 
 
-def obtenir_osm(url, cache, ouvrir=ouvrir_https):
+_MD5_LIGNE = re.compile(r"([0-9a-fA-F]{32})[ \t]+(\S.*)")
+
+
+def _md5_publie(url, nom, ouvrir):
+    """La somme MD5 que l'hôte d'origine publie à `<adresse>.md5` (lue par l'ouvreur strict `ouvrir`) : une ligne
+    `<32 hexadécimaux> <espaces> <nom de fichier>`, le nom égal à celui de l'adresse. Rend la somme en minuscules."""
+    try:
+        req = urllib.request.Request(url + ".md5", headers={"User-Agent": USER_AGENT})
+        with ouvrir(req, timeout=300) as r:
+            code = getattr(r, "status", 200)
+            if code != 200:
+                raise TheatreErreur("extrait %s : somme MD5 introuvable (HTTP %s)" % (nom, code))
+            brut = r.read(4097)
+    except TheatreErreur:
+        raise
+    except Exception as e:
+        raise TheatreErreur("extrait %s : somme MD5 introuvable (%s : %s)" % (nom, type(e).__name__, e))
+    if len(brut) > 4096:
+        raise TheatreErreur("extrait %s : somme MD5 mal formée (trop longue)" % nom)
+    lignes = brut.decode("utf-8", "replace").splitlines()
+    m = _MD5_LIGNE.fullmatch(lignes[0].strip()) if len(lignes) == 1 else None
+    if m is None:
+        raise TheatreErreur("extrait %s : somme MD5 mal formée" % nom)
+    if m.group(2) != nom:
+        raise TheatreErreur("extrait %s : la somme MD5 publiée est celle d'un autre fichier (%s)" % (nom, m.group(2)))
+    return m.group(1).lower()
+
+
+def obtenir_osm(url, cache, ouvrir=ouvrir_https, signaler=None):
     """Le fichier de l'extrait dans le cache. Présent : rendu sans toucher le réseau. Absent : téléchargé en HTTPS dans un
     `.part` du même dossier (code 200, taille égale à Content-Length s'il y en a une, en-tête lisible), puis placé par
-    `os.replace`. Toute erreur efface le `.part` et fait échouer la fabrication."""
+    `os.replace`. Toute erreur efface le `.part` et fait échouer la fabrication.
+
+    Avec l'ouvreur par défaut, l'extrait suit une redirection vers un miroir d'un autre hôte (HTTPS, port 443, sans
+    identifiants) ; un extrait ainsi servi n'est gardé que si sa somme MD5, publiée par l'hôte d'origine à `<adresse>.md5`
+    (lue par `ouvrir`, l'ouvreur strict), lui est égale. Un `ouvrir` donné est celui de l'extrait et de la somme.
+    `signaler(nom, hote)` est appelé quand un extrait servi par un autre hôte a son MD5 vérifié."""
     destination = chemin_osm(cache, url)
     if os.path.isfile(destination):
         return destination
     os.makedirs(os.path.dirname(destination), exist_ok=True)
     part = destination + ".part"
     nom = nom_fichier_url(url)
+    ouvrir_donnees = ouvrir_extrait if ouvrir is ouvrir_https else ouvrir
     try:
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        with ouvrir(req, timeout=300) as r:
+        with ouvrir_donnees(req, timeout=300) as r:
             code = getattr(r, "status", 200)
             if code != 200:
                 raise TheatreErreur("extrait %s : HTTP %s" % (nom, code))
             attendu = r.headers.get("Content-Length")
+            finale = r.geturl() if hasattr(r, "geturl") else None
             with open(part, "wb") as f:
                 shutil.copyfileobj(r, f, 1 << 20)
         if attendu is not None and os.path.getsize(part) != int(attendu):
@@ -276,6 +338,18 @@ def obtenir_osm(url, cache, ouvrir=ouvrir_https):
             en_tete_lisible(part, nom)
         except RuntimeError as e:
             raise TheatreErreur("extrait %s : en-tête illisible (%s)" % (nom, e))
+        miroir = _hote(finale)[0] if finale else None
+        if miroir and miroir != _hote(url)[0]:
+            publie = _md5_publie(url, nom, ouvrir)
+            md5 = hashlib.md5()
+            with open(part, "rb") as f:
+                for bloc in iter(lambda: f.read(1 << 20), b""):
+                    md5.update(bloc)
+            if md5.hexdigest() != publie:
+                raise TheatreErreur("extrait %s : servi par %s, la somme MD5 diffère (publiée %s, reçue %s)"
+                                    % (nom, miroir, publie, md5.hexdigest()))
+            if signaler is not None:
+                signaler(nom, miroir)
         os.replace(part, destination)
     except TheatreErreur:
         raise
@@ -397,14 +471,15 @@ def theatre(nom, sortie, travail, cache, racine=RACINE, environ=None, journal=No
             fichiers = []
             for k, url in enumerate(desc.osm, 1):
                 progres.etape("extraits OpenStreetMap : %s" % nom_fichier_url(url), k, len(desc.osm))
-                fichiers.append(obtenir_osm(url, cache, ouvrir))
+                fichiers.append(obtenir_osm(url, cache, ouvrir, signaler=lambda n, h: progres.etape(
+                    "extraits OpenStreetMap : %s servi par %s, MD5 vérifié" % (n, h))))
             progres.etape("empreintes des extraits OpenStreetMap")
             entrees_osm = []
             for url, f in zip(desc.osm, fichiers):
                 entrees_osm.append({"adresse": url, "fichier": nom_fichier_url(url), "taille": os.path.getsize(f),
                                     "sha256": sha256_fichier(f)})
             if entrees_relief is None:
-                # les dalles passent par le même `ouvrir` que les extraits : aucune redirection hors HTTPS ni vers un autre
+                # les dalles passent par `ouvrir` (le strict, par défaut) : aucune redirection hors HTTPS ni vers un autre
                 # hôte (`fabriquer` et `sources.py` ne changent pas : on leur donne les dalles prêtes)
                 progres.etape("dalles du relief")
                 entrees_relief = preparer_dalles(desc.em_wgs.bounds, os.path.join(cache, "relief"), ouvrir)
