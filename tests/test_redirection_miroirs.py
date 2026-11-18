@@ -1,5 +1,4 @@
-"""Un extrait OSM redirigé vers un miroir (autre hôte, HTTPS) : suivi, puis gardé seulement si son MD5 est celui de l'hôte d'origine."""
-import hashlib
+"""Un extrait OSM redirigé vers un miroir (autre hôte, HTTPS) : suivi, puis gardé sans contrôle MD5."""
 import os
 import urllib.error
 import urllib.request
@@ -26,24 +25,16 @@ class ReponseMiroir(Reponse):
         return self.finale
 
 
-def serveur(brut, md5=None, finale=MIROIR, url=URL):
-    """Un `ouvrir` factice : l'extrait vient de `finale`, le `.md5` de `md5` (octets, ou une exception, ou une Reponse)."""
+def serveur(brut, finale=MIROIR, url=URL):
+    """Un `ouvrir` factice : l'extrait vient de `finale` ; toute autre requête (un `.md5`, par exemple) échoue."""
     vus = []
 
     def ouvrir(req, timeout=None):
         vus.append(req.full_url)
-        if req.full_url == url:
-            return ReponseMiroir(brut, finale)
-        assert req.full_url == url + ".md5", req.full_url
-        if isinstance(md5, Exception):
-            raise md5
-        return md5 if isinstance(md5, Reponse) else Reponse(md5)
+        assert req.full_url == url, req.full_url
+        return ReponseMiroir(brut, finale)
     ouvrir.vus = vus
     return ouvrir
-
-
-def ligne(brut, nom=NOM, sep="  "):
-    return ("%s%s%s\n" % (hashlib.md5(brut).hexdigest(), sep, nom)).encode()
 
 
 def lancer(tmp_path, ouvrir, signaler=None):
@@ -52,23 +43,16 @@ def lancer(tmp_path, ouvrir, signaler=None):
     return str(cache), lambda: th.obtenir_osm(URL, str(cache), ouvrir=ouvrir, signaler=signaler)
 
 
-def test_redirection_vers_un_miroir_avec_md5_conforme(tmp_path):
+def test_redirection_vers_un_miroir_sans_requete_md5(tmp_path):
     brut = open(un_osm(tmp_path), "rb").read()
-    ouvrir = serveur(brut, ligne(brut))
+    ouvrir = serveur(brut)
     dits = []
     cache, go = lancer(tmp_path, ouvrir, lambda n, h: dits.append((n, h)))
     f = go()
     assert open(f, "rb").read() == brut and f == th.chemin_osm(cache, URL)
-    assert ouvrir.vus == [URL, URL + ".md5"], "une seule requête .md5, à l'hôte d'origine"
+    assert ouvrir.vus == [URL], "un seul appel à l'ouvreur, aucune requête .md5"
     assert dits == [(NOM, "miroir.invalid")]
     assert [n for n in os.listdir(os.path.join(cache, "osm")) if n.endswith(".part")] == []
-
-
-def test_md5_en_majuscules_et_separateur_quelconque(tmp_path):
-    brut = open(un_osm(tmp_path), "rb").read()
-    md5 = ("%s \t %s" % (hashlib.md5(brut).hexdigest().upper(), NOM)).encode()
-    _, go = lancer(tmp_path, serveur(brut, md5))
-    assert os.path.isfile(go())
 
 
 def refuse_et_nettoie(tmp_path, ouvrir, message):
@@ -80,44 +64,8 @@ def refuse_et_nettoie(tmp_path, ouvrir, message):
     return str(e.value)
 
 
-def test_md5_different(tmp_path):
-    brut = open(un_osm(tmp_path), "rb").read()
-    faux = hashlib.md5(b"autre chose").hexdigest()
-    m = refuse_et_nettoie(tmp_path, serveur(brut, ("%s  %s\n" % (faux, NOM)).encode()), "diffère")
-    assert faux in m and hashlib.md5(brut).hexdigest() in m, "les deux sommes sont dans le message"
-
-
-def test_md5_introuvable_404(tmp_path):
-    brut = open(un_osm(tmp_path), "rb").read()
-    e404 = urllib.error.HTTPError(URL + ".md5", 404, "Not Found", {}, None)
-    refuse_et_nettoie(tmp_path, serveur(brut, e404), "MD5 introuvable")
-    refuse_et_nettoie(tmp_path, serveur(brut, Reponse(b"x", status=404)), "MD5 introuvable")
-
-
-def test_md5_introuvable_erreur_reseau(tmp_path):
-    brut = open(un_osm(tmp_path), "rb").read()
-    refuse_et_nettoie(tmp_path, serveur(brut, urllib.error.URLError("pas de réseau")), "MD5 introuvable")
-
-
-@pytest.mark.parametrize("contenu", [b"", b"pas une somme\n", b"abc123  mini.osm\n", b"z" * 32 + b"  mini.osm\n",
-                                     b"0" * 32 + b"\n", b"0" * 32 + b"mini.osm\n", b"0" * 33 + b"  mini.osm\n"])
-def test_md5_mal_forme(tmp_path, contenu):
-    brut = open(un_osm(tmp_path), "rb").read()
-    refuse_et_nettoie(tmp_path, serveur(brut, contenu), "mal formée")
-
-
-def test_md5_de_deux_lignes_est_mal_forme(tmp_path):
-    brut = open(un_osm(tmp_path), "rb").read()
-    refuse_et_nettoie(tmp_path, serveur(brut, ligne(brut) + ligne(brut)), "mal formée")
-
-
-def test_md5_d_un_autre_nom_de_fichier(tmp_path):
-    brut = open(un_osm(tmp_path), "rb").read()
-    refuse_et_nettoie(tmp_path, serveur(brut, ligne(brut, nom="autre.osm")), "autre fichier")
-
-
-def test_les_controles_actuels_passent_avant_le_md5(tmp_path):
-    """Une réponse tronquée échoue sur la taille : la somme n'est même pas demandée."""
+def test_les_controles_actuels_restent_pour_un_extrait_de_miroir(tmp_path):
+    """Une réponse tronquée d'un miroir échoue sur la taille."""
     brut = open(un_osm(tmp_path), "rb").read()
 
     def ouvrir(req, timeout=None):
@@ -126,7 +74,7 @@ def test_les_controles_actuels_passent_avant_le_md5(tmp_path):
     refuse_et_nettoie(tmp_path, ouvrir, "tronquée")
 
 
-def test_un_extrait_sans_redirection_n_a_pas_de_md5(tmp_path):
+def test_un_extrait_sans_redirection_n_a_pas_de_requete_md5(tmp_path):
     brut = open(un_osm(tmp_path), "rb").read()
     vus, dits = [], []
 
@@ -138,7 +86,7 @@ def test_un_extrait_sans_redirection_n_a_pas_de_md5(tmp_path):
     assert vus == [URL] and dits == []
 
 
-def test_une_redirection_vers_le_meme_hote_n_a_pas_de_md5(tmp_path):
+def test_une_redirection_vers_le_meme_hote_n_a_pas_de_requete_md5(tmp_path):
     brut = open(un_osm(tmp_path), "rb").read()
     vus = []
 
@@ -202,10 +150,10 @@ def test_la_ligne_de_journal_de_theatre(espace, monkeypatch, jeu):    # noqa: F8
     brut = open(jeu["osm"], "rb").read()
     lignes = []
     monkeypatch.setattr(th, "preparer_dalles", lambda *a, **k: (_ for _ in ()).throw(StopIteration()))
-    ouvrir = serveur(brut, ligne(brut))
+    ouvrir = serveur(brut)
     with pytest.raises(StopIteration):
         th.theatre("mini", espace["sortie"], espace["travail"], espace["cache"], racine=espace["racine"],
                    environ={"FABRIQUE_COMMIT": "0123456789abcdef0123456789abcdef01234567"},
                    progres=Progres(ecrire=lignes.append, intervalle=60), journal=lambda *a: None, ouvrir=ouvrir)
-    assert "progression : extraits OpenStreetMap : mini.osm servi par miroir.invalid, MD5 vérifié" in lignes
+    assert "progression : extraits OpenStreetMap : mini.osm servi par miroir.invalid" in lignes
     assert all("http" not in l for l in lignes)

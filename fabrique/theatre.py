@@ -278,43 +278,14 @@ def en_tete_lisible(chemin, nom):
         lecteur.close()
 
 
-_MD5_LIGNE = re.compile(r"([0-9a-fA-F]{32})[ \t]+(\S.*)")
-
-
-def _md5_publie(url, nom, ouvrir):
-    """La somme MD5 que l'hôte d'origine publie à `<adresse>.md5` (lue par l'ouvreur strict `ouvrir`) : une ligne
-    `<32 hexadécimaux> <espaces> <nom de fichier>`, le nom égal à celui de l'adresse. Rend la somme en minuscules."""
-    try:
-        req = urllib.request.Request(url + ".md5", headers={"User-Agent": USER_AGENT})
-        with ouvrir(req, timeout=300) as r:
-            code = getattr(r, "status", 200)
-            if code != 200:
-                raise TheatreErreur("extrait %s : somme MD5 introuvable (HTTP %s)" % (nom, code))
-            brut = r.read(4097)
-    except TheatreErreur:
-        raise
-    except Exception as e:
-        raise TheatreErreur("extrait %s : somme MD5 introuvable (%s : %s)" % (nom, type(e).__name__, e))
-    if len(brut) > 4096:
-        raise TheatreErreur("extrait %s : somme MD5 mal formée (trop longue)" % nom)
-    lignes = brut.decode("utf-8", "replace").splitlines()
-    m = _MD5_LIGNE.fullmatch(lignes[0].strip()) if len(lignes) == 1 else None
-    if m is None:
-        raise TheatreErreur("extrait %s : somme MD5 mal formée" % nom)
-    if m.group(2) != nom:
-        raise TheatreErreur("extrait %s : la somme MD5 publiée est celle d'un autre fichier (%s)" % (nom, m.group(2)))
-    return m.group(1).lower()
-
-
 def obtenir_osm(url, cache, ouvrir=ouvrir_https, signaler=None):
     """Le fichier de l'extrait dans le cache. Présent : rendu sans toucher le réseau. Absent : téléchargé en HTTPS dans un
     `.part` du même dossier (code 200, taille égale à Content-Length s'il y en a une, en-tête lisible), puis placé par
     `os.replace`. Toute erreur efface le `.part` et fait échouer la fabrication.
 
     Avec l'ouvreur par défaut, l'extrait suit une redirection vers un miroir d'un autre hôte (HTTPS, port 443, sans
-    identifiants) ; un extrait ainsi servi n'est gardé que si sa somme MD5, publiée par l'hôte d'origine à `<adresse>.md5`
-    (lue par `ouvrir`, l'ouvreur strict), lui est égale. Un `ouvrir` donné est celui de l'extrait et de la somme.
-    `signaler(nom, hote)` est appelé quand un extrait servi par un autre hôte a son MD5 vérifié."""
+    identifiants) ; un extrait ainsi servi est gardé sans autre contrôle que ceux ci-dessus. Un `ouvrir` donné est celui
+    de l'extrait. `signaler(nom, hote)` est appelé quand un extrait a été servi par un autre hôte."""
     destination = chemin_osm(cache, url)
     if os.path.isfile(destination):
         return destination
@@ -340,14 +311,6 @@ def obtenir_osm(url, cache, ouvrir=ouvrir_https, signaler=None):
             raise TheatreErreur("extrait %s : en-tête illisible (%s)" % (nom, e))
         miroir = _hote(finale)[0] if finale else None
         if miroir and miroir != _hote(url)[0]:
-            publie = _md5_publie(url, nom, ouvrir)
-            md5 = hashlib.md5()
-            with open(part, "rb") as f:
-                for bloc in iter(lambda: f.read(1 << 20), b""):
-                    md5.update(bloc)
-            if md5.hexdigest() != publie:
-                raise TheatreErreur("extrait %s : servi par %s, la somme MD5 diffère (publiée %s, reçue %s)"
-                                    % (nom, miroir, publie, md5.hexdigest()))
             if signaler is not None:
                 signaler(nom, miroir)
         os.replace(part, destination)
@@ -472,7 +435,7 @@ def theatre(nom, sortie, travail, cache, racine=RACINE, environ=None, journal=No
             for k, url in enumerate(desc.osm, 1):
                 progres.etape("extraits OpenStreetMap : %s" % nom_fichier_url(url), k, len(desc.osm))
                 fichiers.append(obtenir_osm(url, cache, ouvrir, signaler=lambda n, h: progres.etape(
-                    "extraits OpenStreetMap : %s servi par %s, MD5 vérifié" % (n, h))))
+                    "extraits OpenStreetMap : %s servi par %s" % (n, h))))
             progres.etape("empreintes des extraits OpenStreetMap")
             entrees_osm = []
             for url, f in zip(desc.osm, fichiers):
