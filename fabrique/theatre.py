@@ -3,8 +3,9 @@
     python -m fabrique theatre <nom> --sortie <dossier> --travail <dossier> --cache <dossier>
 
 Le descripteur `theatres/<nom>.json` dit l'emprise (sous `zones/`), les extraits OpenStreetMap (adresses HTTPS) et, si
-besoin, le zoom pivot. Trois dossiers : `--sortie` (n'existe pas encore ; son parent, si), `--travail` (existe, vide ; on
-y laisse tout ce qui est temporaire, et on le vide en partant, même sur une erreur), `--cache` (existe ; les extraits et
+besoin, le zoom pivot et des exclusions (corrections de la carte d'aujourd'hui pour une époque antérieure). Trois
+dossiers : `--sortie` (n'existe pas encore ; son parent, si), `--travail` (existe, vide ; on y laisse tout ce qui est
+temporaire, et on le vide en partant, même sur une erreur), `--cache` (existe ; les extraits et
 les dalles qu'on y range se gardent d'une fabrication à l'autre). Rien ne s'écrit ailleurs que sous ces trois dossiers
 et `/tmp`. Le réseau : HTTPS, vers les adresses du descripteur et les seaux Copernicus ; jamais Overpass.
 
@@ -13,6 +14,7 @@ Le code de sortie est 0 si et seulement si le dossier est complet, vérifié (le
 import errno
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -35,7 +37,7 @@ NOM = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 EXTENSIONS = (".osm.pbf", ".osm.gz", ".osm")
 FICHIER_URL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
-CLES = ("nom", "emprise", "osm", "bloc_zoom")
+CLES = ("nom", "emprise", "osm", "bloc_zoom", "exclusions")
 CLES_OBLIGATOIRES = ("nom", "emprise", "osm")
 
 
@@ -44,9 +46,10 @@ class TheatreErreur(RuntimeError):
 
 
 class Descripteur:
-    def __init__(self, nom, emprise_relative, emprise, osm, bloc_zoom, em_wgs):
+    def __init__(self, nom, emprise_relative, emprise, osm, bloc_zoom, em_wgs, exclusions=None):
         self.nom, self.emprise_relative, self.emprise = nom, emprise_relative, emprise
         self.osm, self.bloc_zoom, self.em_wgs = osm, bloc_zoom, em_wgs
+        self.exclusions = exclusions            # la clé `exclusions`, validée ; None si le descripteur n'en a pas
 
 
 def nom_fichier_url(url):
@@ -65,6 +68,74 @@ def _verifier_adresse(url):
         raise TheatreErreur("adresse OSM refusée (.osm.pbf, .osm.gz ou .osm attendu) : %r" % (url,))
     if not FICHIER_URL.fullmatch(nom_fichier_url(url)):
         raise TheatreErreur("adresse OSM refusée (nom de fichier inutilisable) : %r" % (url,))
+
+
+PAYS = re.compile(r"^[A-Z]{2}$")
+LISTES_EXCLUSIONS = {"autoroutes": ("ref", "zone"), "frontieres_effacees": ("pays",), "frontieres_ajoutees": ("a", "b", "zone")}
+LISTES_OBLIGATOIRES = {"autoroutes": ("ref",), "frontieres_effacees": ("pays",), "frontieres_ajoutees": ("a", "b")}
+
+
+def _texte(v):
+    return isinstance(v, str) and bool(v.strip())
+
+
+def _valider_zone(z, chemin):
+    ok = isinstance(z, list) and len(z) == 4 and all(
+        isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) for x in z)
+    if not ok:
+        raise TheatreErreur("descripteur : `%s` doit être quatre nombres [lon_min, lat_min, lon_max, lat_max] : %r"
+                            % (chemin, z))
+    if not (z[0] < z[2] and z[1] < z[3]):
+        raise TheatreErreur("descripteur : `%s` : lon_min < lon_max et lat_min < lat_max sont attendus : %r" % (chemin, z))
+
+
+def _valider_groupe(g, chemin):
+    if not isinstance(g, list) or not g:
+        raise TheatreErreur("descripteur : `%s` doit être une liste non vide de paires [admin_level, nom] : %r" % (chemin, g))
+    for k, p in enumerate(g):
+        if not (isinstance(p, list) and len(p) == 2 and _texte(p[0]) and _texte(p[1])):
+            raise TheatreErreur("descripteur : `%s[%d]` doit être une paire de deux textes non vides [admin_level, nom] : %r"
+                                % (chemin, k, p))
+
+
+def valider_exclusions(x):
+    """La clé `exclusions` d'un descripteur : trois listes facultatives (`autoroutes`, `frontieres_effacees`,
+    `frontieres_ajoutees`), aucune vide, de règles qui n'ont que leurs clés. Toute clé inconnue, à tout niveau, et toute
+    valeur mal formée : `TheatreErreur` qui nomme la clé."""
+    if not isinstance(x, dict):
+        raise TheatreErreur("descripteur : `exclusions` doit être un objet : %r" % (x,))
+    inconnues = sorted(set(x) - set(LISTES_EXCLUSIONS))
+    if inconnues:
+        raise TheatreErreur("descripteur : `exclusions` : clé inconnue : %s" % ", ".join(inconnues))
+    if not x:
+        raise TheatreErreur("descripteur : `exclusions` doit porter au moins une liste (%s)" % ", ".join(LISTES_EXCLUSIONS))
+    for liste, valeurs in x.items():
+        chemin = "exclusions.%s" % liste
+        if not isinstance(valeurs, list) or not valeurs:
+            raise TheatreErreur("descripteur : `%s` doit être une liste non vide de règles : %r" % (chemin, valeurs))
+        for i, r in enumerate(valeurs):
+            c = "%s[%d]" % (chemin, i)
+            if not isinstance(r, dict):
+                raise TheatreErreur("descripteur : `%s` doit être un objet : %r" % (c, r))
+            inconnues = sorted(set(r) - set(LISTES_EXCLUSIONS[liste]))
+            if inconnues:
+                raise TheatreErreur("descripteur : `%s` : clé inconnue : %s" % (c, ", ".join(inconnues)))
+            manquantes = [k for k in LISTES_OBLIGATOIRES[liste] if k not in r]
+            if manquantes:
+                raise TheatreErreur("descripteur : `%s` : clé manquante : %s" % (c, ", ".join(manquantes)))
+            if "ref" in r and not (_texte(r["ref"]) and "".join(r["ref"].split())):
+                raise TheatreErreur("descripteur : `%s.ref` doit être un texte non vide : %r" % (c, r["ref"]))
+            if "zone" in r:
+                _valider_zone(r["zone"], c + ".zone")
+            if "pays" in r:
+                p = r["pays"]
+                if not (isinstance(p, list) and len(p) >= 2 and all(isinstance(k, str) and PAYS.fullmatch(k) for k in p)):
+                    raise TheatreErreur("descripteur : `%s.pays` doit porter au moins deux codes ISO 3166-1 alpha-2 "
+                                        "(deux lettres capitales) : %r" % (c, p))
+            for cote in ("a", "b"):
+                if cote in r:
+                    _valider_groupe(r[cote], "%s.%s" % (c, cote))
+    return x
 
 
 def charger_descripteur(nom, racine=RACINE):
@@ -109,12 +180,13 @@ def charger_descripteur(nom, racine=RACINE):
     if isinstance(bz, bool) or not isinstance(bz, int) or not fab.BLOC_ZOOM_MIN <= bz <= fab.BLOC_ZOOM_MAX:
         raise TheatreErreur("descripteur : `bloc_zoom` doit être un entier de %d à %d : %r"
                             % (fab.BLOC_ZOOM_MIN, fab.BLOC_ZOOM_MAX, bz))
+    exclusions = valider_exclusions(d["exclusions"]) if "exclusions" in d else None
     try:
         em_wgs = lire_emprise(emprise)
         mgrs.verifier_hemisphere(em_wgs)
     except Exception as e:
         raise TheatreErreur("descripteur : emprise inutilisable (%s)" % e)
-    return Descripteur(nom, rel, emprise, list(osm), bz, em_wgs)
+    return Descripteur(nom, rel, emprise, list(osm), bz, em_wgs, exclusions)
 
 
 def lister_descripteurs(racine=RACINE):
@@ -336,9 +408,10 @@ def theatre(nom, sortie, travail, cache, racine=RACINE, environ=None, journal=No
                 # hôte (`fabriquer` et `sources.py` ne changent pas : on leur donne les dalles prêtes)
                 progres.etape("dalles du relief")
                 entrees_relief = preparer_dalles(desc.em_wgs.bounds, os.path.join(cache, "relief"), ouvrir)
+            plus = {} if desc.exclusions is None else {"exclusions": desc.exclusions}
             res = fab._fabriquer(desc.emprise, desc.em_wgs, fichiers, os.path.join(cache, "relief"), en_cours,
                                  os.path.join(travail, "travail"), journal, entrees_relief, desc.bloc_zoom,
-                                 progres=progres, entrees_osm=entrees_osm, commit=commit, theatre=nom)
+                                 progres=progres, entrees_osm=entrees_osm, commit=commit, theatre=nom, **plus)
             fab.poser_droits(en_cours)
             progres.etape("vérification du dossier")
             ok, r = ver.controles(en_cours, journal)

@@ -74,6 +74,23 @@ is refused):
 * `osm`: a non-empty list of `https://` addresses (nothing else is accepted, no credentials, no query string), each
   ending in `.osm.pbf`, `.osm.gz` or `.osm`;
 * `bloc_zoom` (optional): 7 to 10, 8 by default.
+* `exclusions` (optional): corrections of the present-day map for an earlier period, in up to three lists, none empty
+  and no other key:
+  * `autoroutes`: `{"ref": "<ref>"}` removes the motorways (and motorway links) whose `ref` (split on `;`, spaces
+    ignored) is that one; an optional `zone` `[lon_min, lat_min, lon_max, lat_max]` (WGS84) restricts the rule to the
+    ways whose midpoint, halfway along their length, falls in that box;
+  * `frontieres_effacees`: `{"pays": ["XX", "YY"]}` no longer draws a national border (`admin_level=2`) that lies
+    between two country relations (read from `ISO3166-1:alpha2`) that are all in the list;
+  * `frontieres_ajoutees`: `{"a": [["<admin_level>", "<name>"]], "b": [["<admin_level>", "<name>"]], "zone": [...]}` draws, as a national
+    border, the administrative boundary ways that belong to a relation of `a` and to a relation of `b` (each entry is
+    `[admin_level, name]`, the name exact); `zone` as above, optional.
+
+  Before the main read, each extract is read once for its relations only (which ways belong to which country or named
+  area). A rule that matches nothing, or a named area that no relation carries, stops the build before any tile is
+  written. The build log gives one `exclusion :` line per rule (number of ways, ground length in km; for
+  `frontieres_effacees`, also the km per pair of countries), then a line `frontières tracées par paire :` with the km of
+  every national border drawn, per pair of countries (`?` when a way belongs to fewer than two coded relations). A
+  descriptor without `exclusions` is read, and builds, exactly as before.
 
 `theatres/essai-lattaquie.json` is a small test theatre (the 50 x 50 km test square, read from a whole-country extract).
 

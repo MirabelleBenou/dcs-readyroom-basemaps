@@ -228,10 +228,11 @@ def fabriquer(chemin_emprise, fichiers_osm, cache_relief, sortie, journal=print,
 
 
 def _fabriquer(chemin_emprise, em_wgs, fichiers_osm, cache_relief, tmp, travail, journal, entrees_relief, bloc_zoom,
-               progres=None, entrees_osm=None, commit=None, theatre=None):
+               progres=None, entrees_osm=None, commit=None, theatre=None, exclusions=None):
     """Le travail : écrit le dossier dans `tmp`, avec ses fichiers temporaires dans `travail`.
     `entrees_osm` : les entrées OSM du manifeste (par défaut : les fichiers eux-mêmes) ; `commit` : le commit de la
-    fabrique, s'il est donné (sinon Git le dit) ; `theatre` : le nom du théâtre, au manifeste."""
+    fabrique, s'il est donné (sinon Git le dit) ; `theatre` : le nom du théâtre, au manifeste ;
+    `exclusions` : la clé du même nom du descripteur du théâtre, pour la lecture d'OpenStreetMap."""
     chrono = Chrono(journal)
     progres = progres if progres is not None else Muet()
     em = emprise_merc(em_wgs)
@@ -248,7 +249,8 @@ def _fabriquer(chemin_emprise, em_wgs, fichiers_osm, cache_relief, tmp, travail,
     mg = mag.Magasin(os.path.join(travail, "magasin.sqlite"))
     pyr = depot = depot_rel = None
     try:
-        lecture = osm.lire(fichiers_osm, mg, em, travail, couvre=lambda t: glyphes.pile_couvre(polices, t), journal=journal)
+        lecture = osm.lire(fichiers_osm, mg, em, travail, couvre=lambda t: glyphes.pile_couvre(polices, t), journal=journal,
+                           exclusions=exclusions)
         chrono.etape("OpenStreetMap lu dans le magasin (%s)" % ", ".join(
             "%s=%d" % (c, mg.compte(c)) for c in couches.ENTITES if mg.compte(c)))
         grille = terrain.Grille(em.bounds)

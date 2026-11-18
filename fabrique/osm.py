@@ -9,6 +9,11 @@ nœuds, jamais par coordonnées), et les zones résidentielles qui se touchent s
 Le fichier doit être trié (nœuds, chemins, relations), comme tout extrait Geofabrik ou Overpass `out body`.
 Les identifiants servent de graine : une entité garde son identifiant (`n123`, `w456`, `r789`) ; une ligne recollée
 prend `c` et le plus petit identifiant de ses chemins.
+
+Les exclusions (clé `exclusions` du descripteur d'un théâtre) corrigent la carte d'aujourd'hui pour une époque
+antérieure : des autoroutes retirées par leur `ref`, des frontières d'État qu'on ne trace plus entre deux groupes de
+pays, des limites administratives tracées entre deux groupes de zones. Elles ne servent qu'à la première passe ; leur
+lecture des relations (appartenance des chemins, rien d'autre) précède la passe actuelle.
 """
 import json
 import math
@@ -74,6 +79,165 @@ def _touche(boite, g):
     return not (x1 < boite[0] or x0 > boite[2] or y1 < boite[1] or y0 > boite[3])
 
 
+def _nom_regle(liste, rang, regle):
+    """Le nom d'une règle d'exclusion, pour le journal et les messages : sa liste, son rang (dès 0) et son contenu."""
+    return "%s[%d] %s" % (liste, rang, json.dumps(regle, ensure_ascii=False))
+
+
+def _sans_espaces(texte):
+    return "".join(texte.split())
+
+
+def _milieu_dans_zone(ligne, zone):
+    """Le point au milieu de la longueur de la ligne (lue, en Mercator) tombe dans la zone WGS84 (bords compris)."""
+    p = ligne.interpolate(0.5, normalized=True)
+    lon, lat = merc.merc_vers_lonlat(p.x, p.y)
+    return zone[0] <= float(lon) <= zone[2] and zone[1] <= float(lat) <= zone[3]
+
+
+def _km(metres):
+    return "%.1f" % (metres / 1000.0)
+
+
+class Exclusions:
+    """Les règles d'exclusion d'un théâtre (déjà validées par `theatre.charger_descripteur`) et ce qu'elles ont touché.
+
+    `lire_relations` lit d'abord chaque fichier pour ses seules relations ; la première passe interroge ensuite
+    `route_retiree`, `frontiere_d_etat` et `frontiere_ajoutee` pour chaque chemin ; `conclure` journalise, règle par
+    règle, et refuse une règle qui n'a rien touché."""
+
+    def __init__(self, regles):
+        self.autoroutes = [(i, r, _sans_espaces(r["ref"]), r.get("zone")) for i, r in enumerate(regles.get("autoroutes", []))]
+        self.effacees = [(i, r, set(r["pays"])) for i, r in enumerate(regles.get("frontieres_effacees", []))]
+        self.ajoutees = [(i, r, {tuple(p) for p in r["a"]}, {tuple(p) for p in r["b"]}, r.get("zone"))
+                         for i, r in enumerate(regles.get("frontieres_ajoutees", []))]
+        self.voulues = set()
+        for _, _, a, b, _ in self.ajoutees:
+            self.voulues |= a | b
+        # ce que la lecture des relations garde : pour un chemin, les codes pays de ses relations d'État (une entrée par
+        # relation) et les paires nommées qu'une règle attend ; rien d'autre
+        self.pays_de = {}
+        self.paires_de = {}
+        self.paires_vues = set()
+        # ce que la première passe a touché : par règle, {identifiant du chemin: longueur au sol (m) ou (longueur, paire)}
+        self.touches = {("autoroutes", i): {} for i, *_ in self.autoroutes}
+        self.touches.update({("frontieres_effacees", i): {} for i, *_ in self.effacees})
+        self.touches.update({("frontieres_ajoutees", i): {} for i, *_ in self.ajoutees})
+        self.tracees = {}            # chemins d'État tracés : {identifiant: (longueur au sol, paire)}
+
+    # ------------------------------------------------------------------ les relations
+    def lire_relations(self, fichiers):
+        """Une lecture de chaque fichier, pour ses seules relations `boundary=administrative`. Une relation présente dans
+        deux extraits compte une fois."""
+        vues = set()
+        for chemin in fichiers:
+            fp = osmium.FileProcessor(str(chemin), osmium.osm.RELATION) \
+                .with_filter(osmium.filter.TagFilter(("boundary", "administrative")))
+            for r in fp:
+                t = r.tags
+                if t.get("boundary") != "administrative" or r.id in vues:
+                    continue
+                niveau = t.get("admin_level")
+                code = None
+                if niveau == "2":
+                    code = (t.get("ISO3166-1:alpha2") or t.get("ISO3166-1") or "").strip() or None
+                paire = (niveau, t.get("name")) if (niveau, t.get("name")) in self.voulues else None
+                if code is None and paire is None:
+                    continue
+                vues.add(r.id)
+                if paire is not None:
+                    self.paires_vues.add(paire)
+                for m in r.members:
+                    if m.type != "w":
+                        continue
+                    if code is not None:
+                        self.pays_de.setdefault(m.ref, []).append(code)
+                    if paire is not None:
+                        self.paires_de.setdefault(m.ref, set()).add(paire)
+
+    def paires_absentes(self):
+        """Les règles `frontieres_ajoutees` dont une paire nommée n'est portée par aucune relation lue : [message]."""
+        out = []
+        for i, r, a, b, _ in self.ajoutees:
+            for cote, paires in (("a", r["a"]), ("b", r["b"])):
+                for p in paires:
+                    if tuple(p) not in self.paires_vues:
+                        out.append("règle %s : aucune relation lue ne porte la paire %s de `%s`"
+                                   % (_nom_regle("frontieres_ajoutees", i, r), json.dumps(p, ensure_ascii=False), cote))
+        return out
+
+    # ------------------------------------------------------------------ la première passe
+    def route_retiree(self, ident, tags, ligne, coords):
+        """Un chemin `motorway` ou `motorway_link` que l'une des règles `autoroutes` retire."""
+        refs = {_sans_espaces(e) for e in (tags.get("ref") or "").split(";")}
+        retire = False
+        for i, _, ref, zone in self.autoroutes:
+            if ref in refs and (zone is None or _milieu_dans_zone(ligne, zone)):
+                self.touches[("autoroutes", i)][ident] = longueur_sol(coords)
+                retire = True
+        return retire
+
+    def a_des_paires(self, ident):
+        return ident in self.paires_de
+
+    def frontiere_d_etat(self, ident, coords):
+        """Un chemin de frontière lu comme d'habitude (`admin_level=2`) : vrai s'il se trace, faux si une règle l'efface."""
+        codes = sorted(self.pays_de.get(ident, ()))
+        paire = "-".join(codes) if len(codes) >= 2 else "?"
+        longueur = longueur_sol(coords)
+        efface = False
+        if len(codes) >= 2:
+            for i, _, pays in self.effacees:
+                if all(c in pays for c in codes):
+                    self.touches[("frontieres_effacees", i)][ident] = (longueur, paire)
+                    efface = True
+        if efface:
+            return False
+        self.tracees[ident] = (longueur, paire)
+        return True
+
+    def frontiere_ajoutee(self, ident, ligne, coords):
+        """Une limite administrative d'un autre niveau : vraie si une règle `frontieres_ajoutees` la trace."""
+        paires = self.paires_de.get(ident, set())
+        trace = False
+        for i, _, a, b, zone in self.ajoutees:
+            if paires & a and paires & b and (zone is None or _milieu_dans_zone(ligne, zone)):
+                self.touches[("frontieres_ajoutees", i)][ident] = longueur_sol(coords)
+                trace = True
+        return trace
+
+    # ------------------------------------------------------------------ le journal et les refus
+    def conclure(self, journal):
+        """Une ligne par règle, puis les km par paire de pays de toutes les frontières d'État tracées. Une règle qui n'a rien
+        touché fait échouer la fabrication (`TheatreErreur`), après que le journal les a toutes dites."""
+        from .theatre import TheatreErreur
+        vides = []
+        regles = ([("autoroutes", i, r) for i, r, *_ in self.autoroutes] +
+                  [("frontieres_effacees", i, r) for i, r, *_ in self.effacees] +
+                  [("frontieres_ajoutees", i, r) for i, r, *_ in self.ajoutees])
+        for liste, i, r in regles:
+            t = self.touches[(liste, i)]
+            if liste == "frontieres_effacees":
+                longueurs = [v[0] for v in t.values()]
+                par_paire = {}
+                for l, p in t.values():
+                    par_paire[p] = par_paire.get(p, 0.0) + l
+                detail = "".join(" ; %s %s km" % (p, _km(par_paire[p])) for p in sorted(par_paire))
+            else:
+                longueurs = list(t.values())
+                detail = ""
+            journal("exclusion : %s : %d chemins, %s km%s" % (_nom_regle(liste, i, r), len(t), _km(sum(longueurs)), detail))
+            if not t:
+                vides.append(_nom_regle(liste, i, r))
+        par_paire = {}
+        for l, p in self.tracees.values():
+            par_paire[p] = par_paire.get(p, 0.0) + l
+        journal("frontières tracées par paire : %s" % (", ".join("%s %s km" % (p, _km(par_paire[p])) for p in sorted(par_paire))
+                                                      or "aucune"))
+        if vides:
+            raise TheatreErreur("exclusions : une règle ne touche aucun chemin : %s" % " ; ".join(vides))
+
+
 class Lecture:
     """Ce que la première passe a vu des noms : les noms écrits et les noms tus, par classe."""
 
@@ -84,10 +248,19 @@ class Lecture:
         return {c: {"ecrits": sorted(v["ecrits"]), "tus": sorted(v["tus"])} for c, v in self.noms.items()}
 
 
-def charger(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print):
+def charger(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print, exclusions=None):
     """Première passe : range dans le magasin les entités retenues. `couvre(texte)` dit si la pile de polices écrit ce
-    texte (un nom dont un caractère manque aux deux polices ne s'écrit pas). Rend une `Lecture`."""
+    texte (un nom dont un caractère manque aux deux polices ne s'écrit pas). `exclusions` : la clé du même nom du
+    descripteur (ou None : rien ne change). Rend une `Lecture`."""
     lecture = Lecture()
+    ex = None
+    if exclusions is not None:
+        ex = Exclusions(exclusions)
+        ex.lire_relations(fichiers)
+        absentes = ex.paires_absentes()
+        if absentes:
+            from .theatre import TheatreErreur
+            raise TheatreErreur("exclusions : " + " ; ".join(absentes))
     boite = emprise_merc.bounds
     ignorees = 0
     shapely.prepare(emprise_merc)
@@ -152,8 +325,13 @@ def charger(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print
                     candidates.append(("rail", {}))
                 elif t.get("aeroway") == "runway":
                     candidates.append(("piste", {}))
+                ajout = False
                 if t.get("boundary") == "administrative" and t.get("admin_level") == "2" and t.get("maritime") != "yes":
                     candidates.append(("frontiere", {}))
+                elif ex is not None and t.get("boundary") == "administrative" and t.get("maritime") != "yes" \
+                        and ex.a_des_paires(ident):
+                    candidates.append(("frontiere", {}))
+                    ajout = True
                 for groupe, props in candidates:
                     c, n0, n1 = _coords(o)
                     if c is None:
@@ -161,6 +339,13 @@ def charger(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print
                     l = LineString(c)
                     if not _touche(boite, l):
                         break
+                    if ex is not None:
+                        if groupe == "route:motorway:0" or groupe == "route:motorway:1":
+                            if ex.route_retiree(ident, t, l, c):
+                                continue
+                        elif groupe == "frontiere":
+                            if not (ex.frontiere_ajoutee(ident, l, c) if ajout else ex.frontiere_d_etat(ident, c)):
+                                continue
                     if groupe == "piste":
                         magasin.ajouter("pistes", "w%d" % ident, {}, l)
                     else:
@@ -168,6 +353,8 @@ def charger(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print
     if ignorees:
         journal("aires ignorées : %d" % ignorees)
     magasin.valider()
+    if ex is not None:
+        ex.conclure(journal)
     return lecture
 
 
@@ -319,9 +506,9 @@ def assembler_localites(magasin):
     return n
 
 
-def lire(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print):
+def lire(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print, exclusions=None):
     """Toute la lecture : première passe, puis recollage. Rend la `Lecture`."""
-    lecture = charger(fichiers, magasin, emprise_merc, travail, couvre, journal)
+    lecture = charger(fichiers, magasin, emprise_merc, travail, couvre, journal, exclusions)
     assembler_chaines(magasin)
     assembler_localites(magasin)
     return lecture

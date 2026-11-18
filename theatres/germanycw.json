@@ -1,1 +1,22 @@
-{"nom": "germanycw", "emprise": "zones/germanycw.geojson", "osm": ["https://download.geofabrik.de/europe/germany-latest.osm.pbf", "https://download.geofabrik.de/europe/belgium-latest.osm.pbf", "https://download.geofabrik.de/europe/czech-republic-latest.osm.pbf", "https://download.geofabrik.de/europe/denmark-latest.osm.pbf", "https://download.geofabrik.de/europe/france/alsace-latest.osm.pbf", "https://download.geofabrik.de/europe/france/champagne-ardenne-latest.osm.pbf", "https://download.geofabrik.de/europe/france/franche-comte-latest.osm.pbf", "https://download.geofabrik.de/europe/france/lorraine-latest.osm.pbf", "https://download.geofabrik.de/europe/luxembourg-latest.osm.pbf", "https://download.geofabrik.de/europe/netherlands-latest.osm.pbf", "https://download.geofabrik.de/europe/poland-latest.osm.pbf", "https://download.geofabrik.de/europe/sweden-latest.osm.pbf", "https://download.geofabrik.de/europe/switzerland-latest.osm.pbf"]}
+{"nom": "germanycw", "emprise": "zones/germanycw.geojson", "osm": ["https://download.geofabrik.de/europe/germany-latest.osm.pbf", "https://download.geofabrik.de/europe/belgium-latest.osm.pbf", "https://download.geofabrik.de/europe/czech-republic-latest.osm.pbf", "https://download.geofabrik.de/europe/denmark-latest.osm.pbf", "https://download.geofabrik.de/europe/france/alsace-latest.osm.pbf", "https://download.geofabrik.de/europe/france/champagne-ardenne-latest.osm.pbf", "https://download.geofabrik.de/europe/france/franche-comte-latest.osm.pbf", "https://download.geofabrik.de/europe/france/lorraine-latest.osm.pbf", "https://download.geofabrik.de/europe/luxembourg-latest.osm.pbf", "https://download.geofabrik.de/europe/netherlands-latest.osm.pbf", "https://download.geofabrik.de/europe/poland-latest.osm.pbf", "https://download.geofabrik.de/europe/sweden-latest.osm.pbf", "https://download.geofabrik.de/europe/switzerland-latest.osm.pbf"],
+  "exclusions": {
+     "autoroutes": [
+       {"ref": "A 17"}, {"ref": "A 20"}, {"ref": "A 38"}, {"ref": "A 71"}, {"ref": "A 143"},
+       {"ref": "A 14", "zone": [10.5, 51.56, 12.5, 54.2]},
+       {"ref": "A 44", "zone": [9.56, 50.8, 10.3, 51.4]},
+       {"ref": "A 72", "zone": [12.2, 50.88, 12.9, 51.4]},
+       {"ref": "A 73", "zone": [10.5, 50.17, 11.2, 50.75]}
+     ],
+     "frontieres_effacees": [ {"pays": ["CZ", "SK"]} ],
+     "frontieres_ajoutees": [
+       {"a": [["4", "Schleswig-Holstein"], ["4", "Niedersachsen"], ["4", "Hessen"], ["4", "Bayern"]],
+        "b": [["4", "Mecklenburg-Vorpommern"], ["4", "Brandenburg"], ["4", "Sachsen-Anhalt"], ["4", "Thüringen"], ["4", "Sachsen"]]},
+       {"a": [["9", "Charlottenburg-Wilmersdorf"], ["9", "Spandau"], ["9", "Steglitz-Zehlendorf"], ["9", "Tempelhof-Schöneberg"],
+              ["9", "Neukölln"], ["9", "Reinickendorf"], ["10", "Moabit"], ["10", "Hansaviertel"], ["10", "Tiergarten"],
+              ["10", "Wedding"], ["10", "Gesundbrunnen"], ["10", "Kreuzberg"]],
+        "b": [["4", "Brandenburg"], ["9", "Pankow"], ["9", "Lichtenberg"], ["9", "Marzahn-Hellersdorf"], ["9", "Treptow-Köpenick"],
+              ["10", "Mitte"], ["10", "Friedrichshain"]],
+        "zone": [12.9, 52.3, 13.9, 52.7]}
+     ]
+   }
+}

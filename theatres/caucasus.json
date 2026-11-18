@@ -1,1 +1,5 @@
-{"nom": "caucasus", "emprise": "zones/caucasus.geojson", "osm": ["https://download.geofabrik.de/europe/georgia-latest.osm.pbf", "https://download.geofabrik.de/asia/armenia-latest.osm.pbf", "https://download.geofabrik.de/asia/azerbaijan-latest.osm.pbf", "https://download.geofabrik.de/asia/iran-latest.osm.pbf", "https://download.geofabrik.de/europe/turkey-latest.osm.pbf", "https://download.geofabrik.de/europe/ukraine-latest.osm.pbf", "https://download.geofabrik.de/russia/north-caucasus-fed-district-latest.osm.pbf", "https://download.geofabrik.de/russia/south-fed-district-latest.osm.pbf"]}
+{"nom": "caucasus", "emprise": "zones/caucasus.geojson", "osm": ["https://download.geofabrik.de/europe/georgia-latest.osm.pbf", "https://download.geofabrik.de/asia/armenia-latest.osm.pbf", "https://download.geofabrik.de/asia/azerbaijan-latest.osm.pbf", "https://download.geofabrik.de/asia/iran-latest.osm.pbf", "https://download.geofabrik.de/europe/turkey-latest.osm.pbf", "https://download.geofabrik.de/europe/ukraine-latest.osm.pbf", "https://download.geofabrik.de/russia/north-caucasus-fed-district-latest.osm.pbf", "https://download.geofabrik.de/russia/south-fed-district-latest.osm.pbf"],
+  "exclusions": {
+     "frontieres_effacees": [ {"pays": ["RU", "UA", "GE", "AM", "AZ"]} ]
+   }
+}

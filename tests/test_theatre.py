@@ -96,7 +96,7 @@ def test_les_trois_theatres():
         attendu = {"nom": nom, "emprise": "zones/%s.geojson" % nom,
                    "osm": ["https://download.geofabrik.de/%s-latest.osm.pbf" % c for c in chemins]}
         with open(os.path.join(RACINE, "theatres", nom + ".json"), encoding="utf-8") as f:
-            assert json.load(f) == attendu
+            assert {k: v for k, v in json.load(f).items() if k != "exclusions"} == attendu
         d = charger_descripteur(nom)
         assert d.bloc_zoom == 8
         assert d.em_wgs.geom_type == "Polygon"
