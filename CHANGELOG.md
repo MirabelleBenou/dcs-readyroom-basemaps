@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Versions follow semanti
 
 ## Unreleased
 
+## 0.2.0 - 2026-11-18
+
 ### Added
 - Releases are published by a workflow: pushing a branch `release/v<x.y.z>` with the release text and a manifest (and any files to attach) creates the release and its tag. The basemap factory does not change.
 - Finished branches are deleted by a workflow: once a day, `.github/workflows/menage-branches.yml` with `outils/menage_branches.py` deletes a branch whose last commit is at least 7 days old if it is finished — its whole content is already in `main`, its release tag exists, or it is a release trial. Every other branch is kept, and every decision is listed on the run page. Run by hand, the workflow only lists its decisions. The basemap factory does not change.
