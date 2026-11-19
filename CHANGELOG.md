@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Versions follow semanti
 
 ## Unreleased
 
+## 0.2.3 - 2026-11-19
+
 ### Fixed
 - A border added by a theatre rule (`frontieres_ajoutees`) is now recognised by the relations it belongs to, even when the way itself carries no `boundary` tag, as is common in OpenStreetMap; a way tagged `maritime=yes` is still left out.
 
