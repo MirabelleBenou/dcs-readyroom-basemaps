@@ -121,6 +121,11 @@ def lire(tmp_path, fichiers, exclusions, sous="t"):
         mg.fermer()
 
 
+def sans_lecture(lignes):
+    """Le journal sans les lignes « OpenStreetMap lu : » (une par extrait lu), pour comparer le reste."""
+    return [l for l in lignes if not l.startswith("OpenStreetMap lu : ")]
+
+
 def idents(d, couche):
     return sorted(i for i, _, _ in d[couche])
 
@@ -147,7 +152,7 @@ def test_cle_absente_lecture_identique_et_aucune_lecture_de_relations(tmp_path, 
     monkeypatch.setattr(osmium, "FileProcessor", espion)
     d, lignes = lire(tmp_path, p, None)
     assert all(e != osmium.osm.RELATION for e in appels) and len(appels) == 1          # une seule lecture, la passe actuelle
-    assert lignes == []                                                                  # le journal ne change pas
+    assert sans_lecture(lignes) == []                                                                # le journal ne change pas
     monkeypatch.undo()
     attendu, _ = lire_osm(p, tmp_path / "t2")
     assert {c: [(i, pr, g.wkb) for i, pr, g in v] for c, v in d.items()} == \
@@ -408,6 +413,61 @@ def test_un_chemin_deja_trace_n_est_pas_trace_deux_fois_ni_compte_comme_ajoute(t
     assert ": 3 chemins, " in ajout
 
 
+# ---------------------------------------------------------------------- les relations seules disent la frontière
+RELATIONS_AB = [(200, {"boundary": "administrative", "admin_level": "4", "name": "Hessen"}, [40, 41, 42]),
+                (201, {"boundary": "administrative", "admin_level": "4", "name": "Thüringen"}, [40, 41, 43])]
+REGLE_AB = {"frontieres_ajoutees": [{"a": [["4", "Hessen"]], "b": [["4", "Thüringen"]]}]}
+
+
+def test_un_chemin_sans_etiquette_membre_de_a_et_de_b_est_trace(tmp_path):
+    chemins = [(40, ligne(35.40), {}),                                  # aucune étiquette, membre de a et de b
+               (41, ligne(35.41), {"maritime": "yes"}),                 # idem, maritime
+               (42, ligne(35.42), {}),                                  # membre de a seulement
+               (43, ligne(35.43), {})]                                  # membre de b seulement
+    p = fabrique_extrait(tmp_path, chemins=chemins, relations=RELATIONS_AB)
+    d, lignes = lire(tmp_path, p, REGLE_AB)
+    assert idents(d, "frontieres") == ["c40"]
+    assert any(l.startswith("exclusion : frontieres_ajoutees[0]") and ": 1 chemins, " in l for l in sans_lecture(lignes))
+
+
+def test_une_regle_sans_chemin_commun_aux_relations_echoue_avant_la_premiere_passe(tmp_path, monkeypatch):
+    chemins = [(42, ligne(35.42), {}), (43, ligne(35.43), {})]
+    relations = [(200, {"boundary": "administrative", "admin_level": "4", "name": "Hessen"}, [42]),
+                 (201, {"boundary": "administrative", "admin_level": "4", "name": "Thüringen"}, [43])]
+    p = fabrique_extrait(tmp_path, chemins=chemins, relations=relations)
+    appels = []
+    vrai = osmium.FileProcessor
+
+    def espion(chemin, entites=None, *a, **k):
+        appels.append(entites)
+        return vrai(chemin, entites, *a, **k) if entites is not None else vrai(chemin)
+    monkeypatch.setattr(osmium, "FileProcessor", espion)
+    x0, y0 = merc.lonlat_vers_merc(LON0 - 0.5, LAT0 - 0.5)
+    x1, y1 = merc.lonlat_vers_merc(LON1 + 0.5, LAT1 + 0.5)
+    mg = Magasin(str(tmp_path / "m.sqlite"))
+    lignes = []
+    with pytest.raises(TheatreErreur) as e:
+        osm.charger([p], mg, box(float(x0), float(y0), float(x1), float(y1)), str(tmp_path), journal=lignes.append,
+                    exclusions=REGLE_AB)
+    mg.fermer()
+    nom = osm._nom_regle("frontieres_ajoutees", 0, REGLE_AB["frontieres_ajoutees"][0])
+    assert str(e.value) == "exclusions : règle %s : aucun chemin commun aux relations de `a` et de `b`" % nom
+    assert appels == [osmium.osm.RELATION]                       # la lecture des relations seule
+    assert not any(l.startswith("exclusion :") for l in lignes) and lignes == []
+
+
+def test_une_ligne_de_journal_par_extrait_lu(tmp_path):
+    p = fabrique_extrait(tmp_path)
+    q = fabrique_extrait(tmp_path, "n.osm")
+    _, lignes = lire(tmp_path, [p, q], {"autoroutes": [{"ref": "A 17"}]})
+    lus = [l for l in lignes if l.startswith("OpenStreetMap lu : ")]
+    assert len(lus) == 2
+    assert re.fullmatch(r"OpenStreetMap lu : m\.osm \(1/2\) en \d+ s", lus[0])
+    assert re.fullmatch(r"OpenStreetMap lu : n\.osm \(2/2\) en \d+ s", lus[1])
+    _, lignes = lire(tmp_path, p, None, "t2")                    # sans exclusions aussi
+    assert len(lignes) == 1 and re.fullmatch(r"OpenStreetMap lu : m\.osm \(1/1\) en \d+ s", lignes[0])
+
+
 # ---------------------------------------------------------------------- la règle 6
 def test_une_regle_qui_ne_touche_rien_fait_echouer_et_se_nomme(tmp_path):
     p = fabrique_extrait(tmp_path)
@@ -468,7 +528,7 @@ def test_les_lignes_du_journal(tmp_path):
          "frontieres_effacees": [{"pays": ["RU", "UA", "GE"]}],
          "frontieres_ajoutees": [dict(REGLES_A_B, zone=ZONE_Z)]}
     d, lignes = lire(tmp_path, p, x)
-    assert lignes == [
+    assert sans_lecture(lignes) == [
         'exclusion : autoroutes[0] {"ref": "A 17"} : 4 chemins, %s km' % km_de(chemins, {1, 2, 3, 4}),
         'exclusion : autoroutes[1] {"ref": "A 14", "zone": [35.99, 35.3, 36.01, 35.5]} : 1 chemins, %s km' % km_de(chemins, {8}),
         'exclusion : frontieres_effacees[0] {"pays": ["RU", "UA", "GE"]} : 2 chemins, %s km ; GE-RU %s km ; RU-UA %s km'
@@ -484,7 +544,7 @@ def test_journal_d_une_frontiere_sans_aucune_trace(tmp_path):
     chemins = [(1, ligne(35.40), {**AUTO, "ref": "A 1"})]
     p = fabrique_extrait(tmp_path, chemins=chemins, relations=[])
     d, lignes = lire(tmp_path, p, {"autoroutes": [{"ref": "A 1"}]})
-    assert lignes == ['exclusion : autoroutes[0] {"ref": "A 1"} : 1 chemins, %s km' % km_de(chemins, {1}),
+    assert sans_lecture(lignes) == ['exclusion : autoroutes[0] {"ref": "A 1"} : 1 chemins, %s km' % km_de(chemins, {1}),
                       "frontières tracées par paire : aucune"]
     assert d["routes"] == []
 
@@ -496,7 +556,7 @@ def test_une_relation_dans_deux_extraits_compte_une_fois(tmp_path):
     x = {"frontieres_effacees": [{"pays": ["RU", "UA"]}], "frontieres_ajoutees": [REGLES_A_B]}
     seul, l1 = lire(tmp_path, p, x, "t1")
     deux, l2 = lire(tmp_path, [p, q], x, "t2")
-    assert l1 == l2
+    assert sans_lecture(l1) == sans_lecture(l2)
     assert {c: [i for i, _, _ in v] for c, v in seul.items()} == {c: [i for i, _, _ in v] for c, v in deux.items()}
     # une relation en double dans un seul fichier ne double pas les codes d'un chemin (elle compte une fois)
     c, r = chemins_de_base()

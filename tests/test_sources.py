@@ -115,7 +115,7 @@ def test_tout_autre_code_est_une_erreur_et_ne_laisse_rien(tmp_path):
         appels = []
         srv = serveur({"copernicus-dem-30m": (code, b"")}, appels)
         with pytest.raises(sources.SourceErreur, match=str(code)):
-            sources.preparer_dalles((35.2, 35.2, 35.8, 35.7), str(cache), ouvrir=srv)
+            sources.preparer_dalles((35.2, 35.2, 35.8, 35.7), str(cache), ouvrir=srv, dormir=lambda s: None)
         assert len(appels) == 1                                   # pas de repli, pas de réessai
         assert not [f for f in os.listdir(cache)]                 # ni dalle, ni marque d'absence, ni .part
 
@@ -125,12 +125,36 @@ def test_dalle_tronquee_ou_illisible_refusee_et_part_efface(tmp_path):
     data = tif_octets()
     tronque = serveur({"copernicus-dem-30m": (200, data[:len(data) // 2], len(data))}, [])
     with pytest.raises(sources.SourceErreur):
-        sources.preparer_dalles((35.2, 35.2, 35.8, 35.7), str(cache), ouvrir=tronque)
+        sources.preparer_dalles((35.2, 35.2, 35.8, 35.7), str(cache), ouvrir=tronque, dormir=lambda s: None)
     assert os.listdir(cache) == []
     pas_une_dalle = serveur({"copernicus-dem-30m": (200, b"ce n'est pas un GeoTIFF")}, [])
     with pytest.raises(sources.SourceErreur):
-        sources.preparer_dalles((35.2, 35.2, 35.8, 35.7), str(cache), ouvrir=pas_une_dalle)
+        sources.preparer_dalles((35.2, 35.2, 35.8, 35.7), str(cache), ouvrir=pas_une_dalle, dormir=lambda s: None)
     assert os.listdir(cache) == []
+
+
+def test_erreur_reseau_cinq_essais_quatre_pauses_de_35_s_puis_erreur(tmp_path):
+    cache = tmp_path / "cache"
+    appels, pauses = [], []
+    srv = serveur({"copernicus-dem-30m": urllib.error.URLError("DNS")}, appels)
+    with pytest.raises(sources.SourceErreur, match="téléchargement impossible"):
+        sources.preparer_dalles((35.2, 35.2, 35.8, 35.7), str(cache), ouvrir=srv, dormir=pauses.append)
+    assert len(appels) == 5 and pauses == [35, 35, 35, 35]
+    assert os.listdir(cache) == []
+
+
+def test_succes_au_troisieme_essai_apres_deux_pauses(tmp_path):
+    cache = str(tmp_path / "cache")
+    appels, pauses = [], []
+    bon = serveur({"copernicus-dem-30m": (200, tif_octets())}, appels)
+
+    def ouvrir(req, timeout=None):
+        if len(appels) < 2:
+            appels.append(req.full_url)
+            raise urllib.error.URLError("DNS")
+        return bon(req, timeout)
+    e = sources.preparer_dalles((35.2, 35.2, 35.8, 35.7), cache, ouvrir=ouvrir, dormir=pauses.append)
+    assert e[0]["source"] == "glo30" and len(appels) == 3 and pauses == [35, 35]
 
 
 def test_dalle_absente_donne_altitude_zero(tmp_path):
