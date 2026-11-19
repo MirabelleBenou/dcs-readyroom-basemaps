@@ -18,6 +18,7 @@ lecture des relations (appartenance des chemins, rien d'autre) précède la pass
 import json
 import math
 import os
+import time
 
 import numpy as np
 import osmium
@@ -166,6 +167,15 @@ class Exclusions:
                                    % (_nom_regle("frontieres_ajoutees", i, r), json.dumps(p, ensure_ascii=False), cote))
         return out
 
+    def regles_sans_chemin_commun(self):
+        """Les règles `frontieres_ajoutees` dont aucun chemin n'a, par ses relations, une paire de `a` et une paire de `b` :
+        [message]. Calculé sur la seule lecture des relations, avant la première passe."""
+        out = []
+        for i, r, a, b, _ in self.ajoutees:
+            if not any(p & a and p & b for p in self.paires_de.values()):
+                out.append("règle %s : aucun chemin commun aux relations de `a` et de `b`" % _nom_regle("frontieres_ajoutees", i, r))
+        return out
+
     # ------------------------------------------------------------------ la première passe
     def route_retiree(self, ident, tags, ligne, coords):
         """Un chemin `motorway` ou `motorway_link` que l'une des règles `autoroutes` retire."""
@@ -261,10 +271,15 @@ def charger(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print
         if absentes:
             from .theatre import TheatreErreur
             raise TheatreErreur("exclusions : " + " ; ".join(absentes))
+        sans_chemin = ex.regles_sans_chemin_commun()
+        if sans_chemin:
+            from .theatre import TheatreErreur
+            raise TheatreErreur("exclusions : " + " ; ".join(sans_chemin))
     boite = emprise_merc.bounds
     ignorees = 0
     shapely.prepare(emprise_merc)
     for i, chemin in enumerate(fichiers):
+        debut = time.monotonic()
         index = os.path.join(travail, "noeuds-%d.idx" % i)
         fp = osmium.FileProcessor(str(chemin), osmium.osm.NODE | osmium.osm.WAY | osmium.osm.AREA) \
             .with_locations("sparse_file_array," + index).with_areas(osmium.filter.TagFilter(*FILTRE_ZONES))
@@ -328,8 +343,7 @@ def charger(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print
                 ajout = False
                 if t.get("boundary") == "administrative" and t.get("admin_level") == "2" and t.get("maritime") != "yes":
                     candidates.append(("frontiere", {}))
-                elif ex is not None and t.get("boundary") == "administrative" and t.get("maritime") != "yes" \
-                        and ex.a_des_paires(ident):
+                elif ex is not None and t.get("maritime") != "yes" and ex.a_des_paires(ident):
                     candidates.append(("frontiere", {}))
                     ajout = True
                 for groupe, props in candidates:
@@ -350,6 +364,8 @@ def charger(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print
                         magasin.ajouter("pistes", "w%d" % ident, {}, l)
                     else:
                         magasin.ajouter_brut(groupe, ident, n0, n1, props, l)
+        journal("OpenStreetMap lu : %s (%d/%d) en %d s" % (os.path.basename(str(chemin)), i + 1, len(fichiers),
+                                                           round(time.monotonic() - debut)))
     if ignorees:
         journal("aires ignorées : %d" % ignorees)
     magasin.valider()

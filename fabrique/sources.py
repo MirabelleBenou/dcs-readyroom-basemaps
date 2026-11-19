@@ -3,6 +3,7 @@ import hashlib
 import math
 import os
 import shutil
+import time
 import urllib.error
 import urllib.request
 
@@ -14,6 +15,8 @@ ABSENTE = "absente"
 
 HOTES = {GLO30: "copernicus-dem-30m", GLO90: "copernicus-dem-90m"}
 CODES = {GLO30: 10, GLO90: 30}
+ESSAIS = 5
+PAUSE_S = 35
 USER_AGENT = "dcs-readyroom-basemaps (+https://github.com/MirabelleBenou/dcs-readyroom-basemaps)"
 
 
@@ -75,14 +78,17 @@ def marque_absence(cache, lat, lon, source):
     return chemin_cache(cache, lat, lon, source) + ".absente"
 
 
-def _telecharger(url, destination, ouvrir=urllib.request.urlopen, tentatives=3):
+def _telecharger(url, destination, ouvrir=urllib.request.urlopen, tentatives=ESSAIS, dormir=time.sleep):
     """Télécharge url. Rend True ; False pour un 404 (la dalle n'existe pas). Tout autre code HTTP est une erreur
     (`SourceErreur`) qui arrête la fabrication. Le fichier ne prend sa place qu'entier : taille égale à Content-Length,
-    ouvert par rasterio ; le `.part` s'efface sur toute erreur."""
+    ouvert par rasterio ; le `.part` s'efface sur toute erreur. Une erreur réseau se réessaie, `PAUSE_S` secondes plus tard
+    (`dormir`), jusqu'à `tentatives` essais ; pas de pause après le dernier."""
     os.makedirs(os.path.dirname(destination), exist_ok=True)
     tmp = destination + ".part"
     derniere = None
-    for _ in range(tentatives):
+    for essai in range(tentatives):
+        if essai:
+            dormir(PAUSE_S)
         try:
             req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
             with ouvrir(req, timeout=300) as r:
@@ -113,7 +119,7 @@ def _telecharger(url, destination, ouvrir=urllib.request.urlopen, tentatives=3):
     raise SourceErreur("téléchargement impossible : %s (%r)" % (url, derniere))
 
 
-def _dalle(cache, lat, lon, ouvrir):
+def _dalle(cache, lat, lon, ouvrir, dormir=time.sleep):
     """Le fichier d'une dalle et sa source : le cache d'abord (aucun réseau s'il suffit), puis le seau GLO-30, puis GLO-90
     (404 seul), puis la mer (altitude 0). Rend (source, fichier ou None)."""
     for src in (GLO30, GLO90):
@@ -122,19 +128,19 @@ def _dalle(cache, lat, lon, ouvrir):
             return src, local
         if os.path.isfile(marque_absence(cache, lat, lon, src)):
             continue
-        if _telecharger(url_dalle(lat, lon, src), local, ouvrir):
+        if _telecharger(url_dalle(lat, lon, src), local, ouvrir, dormir=dormir):
             return src, local
         open(marque_absence(cache, lat, lon, src), "w").close()
     return ABSENTE, None
 
 
-def preparer_dalles(boite, cache, ouvrir=urllib.request.urlopen):
+def preparer_dalles(boite, cache, ouvrir=urllib.request.urlopen, dormir=time.sleep):
     """Choisit les dalles et les met en cache ; rend les entrées du manifeste (une par dalle). Une fabrication au cache
     complet ne touche pas le réseau."""
     os.makedirs(cache, exist_ok=True)
     entrees = []
     for lat, lon in sorted(dalles_necessaires(boite)):
-        src, local = _dalle(cache, lat, lon, ouvrir)
+        src, local = _dalle(cache, lat, lon, ouvrir, dormir)
         e = {"dalle": nom_dalle(lat, lon), "lat": lat, "lon": lon, "source": src,
              "adresse": None if src == ABSENTE else url_dalle(lat, lon, src)}
         if local:
