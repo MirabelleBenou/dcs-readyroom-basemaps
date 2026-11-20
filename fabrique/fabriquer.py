@@ -233,6 +233,7 @@ def _fabriquer(chemin_emprise, em_wgs, fichiers_osm, cache_relief, tmp, travail,
     `entrees_osm` : les entrées OSM du manifeste (par défaut : les fichiers eux-mêmes) ; `commit` : le commit de la
     fabrique, s'il est donné (sinon Git le dit) ; `theatre` : le nom du théâtre, au manifeste ;
     `exclusions` : la clé du même nom du descripteur du théâtre, pour la lecture d'OpenStreetMap."""
+    mvt.REPRISES.clear()
     chrono = Chrono(journal)
     progres = progres if progres is not None else Muet()
     em = emprise_merc(em_wgs)
@@ -270,6 +271,9 @@ def _fabriquer(chemin_emprise, em_wgs, fichiers_osm, cache_relief, tmp, travail,
         progres.etape("survol (zooms %d à %d)" % (bandes.ZOOM_MIN_FOND, bloc_zoom - 1))
         n = traiter_survol(ctx, bloc_zoom, travail)
         chrono.etape("survol (zooms %d à %d) : %d tuiles de fond" % (bandes.ZOOM_MIN_FOND, bloc_zoom - 1, n))
+        reprises = mvt.ligne_reprises()
+        if reprises:
+            journal(reprises)
         progres.etape("tuiles du relief")
         nr = reliefpm.construire_relief(pyr, em, depot_rel)
         chrono.etape("relief : %d tuiles" % nr)

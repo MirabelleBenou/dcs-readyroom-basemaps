@@ -181,7 +181,38 @@ def repartir_morceau(coll, couche, cle, geom, props, zooms, bloc=None):
 
 
 # ---------------------------------------------------------------------- encodage
-def _vers_tuile(g, xmin, ymax, taille):
+GENRES_REPRISES = ("morceau revalidé", "union sans grille", "morceaux séparés", "arrondi après validation",
+                   "géométrie écartée")
+REPRISES = []          # les reprises d'une fabrication : (z, x, y, couche, genre), dans l'ordre où elles surviennent
+
+
+def _noter(ou, couche, genre):
+    z, x, y = ou if ou else (None, None, None)
+    REPRISES.append((z, x, y, couche, genre))
+
+
+def ligne_reprises():
+    """La ligne du journal qui compte les reprises et nomme les premières ; None s'il n'y en a pas."""
+    if not REPRISES:
+        return None
+    nb = {g: sum(1 for r in REPRISES if r[4] == g) for g in GENRES_REPRISES}
+    genres = ", ".join("%s : %d" % (g, n) for g, n in nb.items() if n)
+    premieres = ", ".join("%s/%s/%s %s %s" % r for r in REPRISES[:5])
+    return "géométries reprises : %d (%s) ; premières : %s" % (len(REPRISES), genres, premieres)
+
+
+def _polygones(g):
+    """Les Polygon non vides de g, à plat (g peut être un multi ou une collection, imbriquée ou non)."""
+    if g is None or g.is_empty:
+        return []
+    if g.geom_type == "Polygon":
+        return [g]
+    if hasattr(g, "geoms"):
+        return [p for h in g.geoms for p in _polygones(h)]
+    return []
+
+
+def _vers_tuile(g, xmin, ymax, taille, ou=None, couche=None):
     k = merc.ETENDUE_MVT / taille
 
     def f(c):
@@ -190,54 +221,103 @@ def _vers_tuile(g, xmin, ymax, taille):
         out[:, 1] = (ymax - c[:, 1]) * k
         return out
 
-    return shapely.set_precision(shapely.transform(g, f), 1.0)
+    h = shapely.transform(g, f)
+    try:
+        return shapely.set_precision(h, 1.0)
+    except shapely.errors.GEOSException:
+        pass
+    try:
+        r = shapely.set_precision(shapely.make_valid(h), 1.0)
+    except shapely.errors.GEOSException:
+        _noter(ou, couche, "géométrie écartée")
+        return shapely.from_wkt("GEOMETRYCOLLECTION EMPTY")
+    _noter(ou, couche, "arrondi après validation")
+    return r
+
+
+def _mer(lst, xmin, ymax, taille, ou):
+    """Les entités de la couche mer : les morceaux arrondis, rendus valides, puis unis (avec deux replis)."""
+    morceaux = []
+    for _, g, _ in lst:
+        m = _vers_tuile(g, xmin, ymax, taille, ou, "mer")
+        if not m.is_valid:
+            _noter(ou, "mer", "morceau revalidé")
+            morceaux.extend(_polygones(shapely.make_valid(m)))
+        elif not m.is_empty:
+            morceaux.append(m)
+    if not morceaux:
+        return []
+    try:
+        u = shapely.union_all(morceaux, grid_size=1.0)
+        lot = [p for p in (u.geoms if hasattr(u, "geoms") else [u])]
+    except shapely.errors.GEOSException:
+        try:
+            u = shapely.set_precision(shapely.union_all(morceaux), 1.0)
+            _noter(ou, "mer", "union sans grille")
+            lot = [p for p in (u.geoms if hasattr(u, "geoms") else [u])]
+        except shapely.errors.GEOSException:
+            _noter(ou, "mer", "morceaux séparés")
+            lot = [p for m in morceaux for p in _polygones(m)]
+    parts = [p for p in lot if p.geom_type == "Polygon" and not p.is_empty and p.area >= 0.5]
+    parts.sort(key=lambda p: (p.bounds[0], p.bounds[1], p.area))
+    return [{"geometry": p, "properties": {}} for p in parts]
+
+
+def _couche_autre(lst, xmin, ymax, taille, ou, nom):
+    feats = []
+    vus = set()
+    for _, g, props in lst:
+        h = _vers_tuile(g, xmin, ymax, taille, ou, nom)
+        if h.is_empty:
+            continue
+        if h.geom_type == "Point":
+            k = (h.x, h.y, json.dumps(props, sort_keys=True))
+            if k in vus:
+                continue
+            vus.add(k)
+        if h.geom_type in ("Polygon", "MultiPolygon") and h.area < 0.5:
+            continue
+        feats.append({"geometry": h, "properties": dict(sorted(props.items()))})   # ordre des clés fixe, d'où qu'elles viennent
+    return feats
+
+
+def _erreur(z, x, y, nom, e):
+    return RuntimeError("tuile %d/%d/%d, couche %s : %s: %s" % (z, x, y, nom, type(e).__name__, e))
 
 
 def encoder_tuile(z, x, y, par_couche, champs=None):
     """Les couches d'une tuile (morceaux déjà coupés à la boîte à tampon), arrondies à la grille MVT ; None si vide.
     Les morceaux de mer de cellules voisines s'unissent (sur la grille MVT, donc sans fente) ; les arbres en double
-    (deux forêts qui se recouvrent) s'écrivent une fois. `champs` : un dict qui note, par couche présente, les champs vus."""
+    (deux forêts qui se recouvrent) s'écrivent une fois. `champs` : un dict qui note, par couche présente, les champs vus.
+    Une exception de GEOS se reprend et se note dans REPRISES ; toute autre erreur nomme la tuile et la couche."""
     xmin, ymin, xmax, ymax = merc.bornes_tuile(z, x, y)
     taille = xmax - xmin
+    ou = (z, x, y)
     couches = []
     for nom in COUCHES:
         lst = par_couche.get(nom)
         if not lst:
             continue
-        feats = []
-        if nom == "mer":
-            morceaux = [_vers_tuile(g, xmin, ymax, taille) for _, g, _ in lst]
-            morceaux = [m for m in morceaux if not m.is_empty]
-            if morceaux:
-                u = shapely.union_all(morceaux, grid_size=1.0)
-                parts = [p for p in (u.geoms if hasattr(u, "geoms") else [u]) if p.geom_type == "Polygon"
-                         and not p.is_empty and p.area >= 0.5]
-                parts.sort(key=lambda p: (p.bounds[0], p.bounds[1], p.area))
-                feats = [{"geometry": p, "properties": {}} for p in parts]
-        else:
-            vus = set()
-            for _, g, props in lst:
-                h = _vers_tuile(g, xmin, ymax, taille)
-                if h.is_empty:
-                    continue
-                if h.geom_type == "Point":
-                    k = (h.x, h.y, json.dumps(props, sort_keys=True))
-                    if k in vus:
-                        continue
-                    vus.add(k)
-                if h.geom_type in ("Polygon", "MultiPolygon") and h.area < 0.5:
-                    continue
-                feats.append({"geometry": h, "properties": dict(sorted(props.items()))})   # ordre des clés fixe, d'où qu'elles viennent
-        if feats:
-            couches.append({"name": nom, "features": feats})
-            if champs is not None:
-                c = champs.setdefault(nom, {})
-                for feat in feats:
-                    for k, v in feat["properties"].items():
-                        c[k] = "Number" if isinstance(v, (int, float)) else "String"
+        try:
+            if nom == "mer":
+                feats = _mer(lst, xmin, ymax, taille, ou)
+            else:
+                feats = _couche_autre(lst, xmin, ymax, taille, ou, nom)
+            if feats:
+                couches.append({"name": nom, "features": feats})
+                if champs is not None:
+                    c = champs.setdefault(nom, {})
+                    for feat in feats:
+                        for k, v in feat["properties"].items():
+                            c[k] = "Number" if isinstance(v, (int, float)) else "String"
+        except Exception as e:
+            raise _erreur(z, x, y, nom, e) from e
     if not couches:
         return None
-    return mapbox_vector_tile.encode(couches, default_options=OPTIONS)
+    try:
+        return mapbox_vector_tile.encode(couches, default_options=OPTIONS)
+    except Exception as e:
+        raise _erreur(z, x, y, "encodage", e) from e
 
 
 def gzip_sans_date(data):
