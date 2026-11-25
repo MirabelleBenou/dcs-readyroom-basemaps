@@ -274,7 +274,6 @@ def charger(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print
         debut_rel = time.monotonic()
         ex.lire_relations(fichiers)
         lecture.relations_s = round(time.monotonic() - debut_rel)
-        journal("relations des frontières lues en %d s" % lecture.relations_s)
         absentes = ex.paires_absentes()
         if absentes:
             from .theatre import TheatreErreur

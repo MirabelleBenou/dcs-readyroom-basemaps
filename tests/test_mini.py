@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -258,3 +259,51 @@ def test_verifier_rend_1_sur_toute_erreur_avec_le_message(tmp_path, capsys, monk
     assert "erreur : tuile illisible" in capsys.readouterr().err
     (tmp_path / "vide").mkdir()
     assert cli.principal(["verifier", str(tmp_path / "vide")]) == 1
+
+
+def _avec_osm(dossier_source, dest, osm_manifeste):
+    """Copie le dossier rendu et pose (ou retire, si None) `execution.osm` dans son manifeste."""
+    shutil.copytree(dossier_source, dest)
+    chemin = os.path.join(dest, "manifeste.json")
+    with open(chemin, encoding="utf-8") as f:
+        m = json.load(f)
+    if osm_manifeste is None:
+        m["execution"].pop("osm", None)
+    else:
+        m["execution"]["osm"] = osm_manifeste
+    manifeste.ecrire(chemin, m)
+    return dest
+
+
+def test_ligne_de_verifier_a_l_octet_et_absente_sans_la_cle(deux, tmp_path):
+    avec = _avec_osm(deux[0], str(tmp_path / "avec"), {"extraits": [["a.pbf", 12], ["b.pbf", 3]], "relations_s": 7,
+                                                       "recollage_s": 5})
+    lignes = []
+    ok, _ = controles(avec, journal=lignes.append)
+    assert ok
+    assert [l for l in lignes if l.startswith("lecture d'OSM")] == [
+        "lecture d'OSM : a.pbf 12 s, b.pbf 3 s ; relations 7 s ; recollage 5 s ; total 27 s"]
+    assert lignes.index([l for l in lignes if l.startswith("lecture d'OSM")][0]) == \
+        [k for k, l in enumerate(lignes) if l.startswith("le fond se tait")][0] + 1
+    sans_rel = _avec_osm(deux[0], str(tmp_path / "sans_rel"), {"extraits": [["a.pbf", 12], ["b.pbf", 3]], "relations_s": None,
+                                                              "recollage_s": 5})
+    lignes = []
+    controles(sans_rel, journal=lignes.append)
+    assert [l for l in lignes if l.startswith("lecture d'OSM")] == [
+        "lecture d'OSM : a.pbf 12 s, b.pbf 3 s ; relations - s ; recollage 5 s ; total 20 s"]
+    # sans la clé : aucune ligne, et le même résultat que sur le dossier d'origine privé de la clé
+    sans = _avec_osm(deux[0], str(tmp_path / "sans"), None)
+    lignes = []
+    ok_s, res_s = controles(sans, journal=lignes.append)
+    assert ok_s and not [l for l in lignes if l.startswith("lecture d'OSM")]
+    assert res_s["echecs"] == [] and "avertissements" not in res_s
+
+
+def test_execution_osm_au_manifeste_hors_de_la_partie_comparable(deux):
+    ms = [json.load(open(os.path.join(d, "manifeste.json"), encoding="utf-8")) for d in deux]
+    for m in ms:
+        o = m["execution"]["osm"]
+        assert [n for n, _ in o["extraits"]] == ["mini.osm"]
+        assert o["relations_s"] is None and isinstance(o["recollage_s"], int)
+        assert "execution" not in manifeste.partie_comparable(m)
+    assert manifeste.sha256_comparable(ms[0]) == manifeste.sha256_comparable(ms[1])
