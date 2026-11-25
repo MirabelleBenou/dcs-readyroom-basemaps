@@ -293,6 +293,13 @@ def controles(dossier, journal=print):
         res["saturation_max_" + t] = round(mx, 3)
     journal("le fond se tait : saturation HSL maximale %.1f %% (clair), %.1f %% (sombre)"
             % (100 * res["saturation_max_clair"], 100 * res["saturation_max_sombre"]))
+    lu = (m.get("execution") or {}).get("osm")
+    if lu:
+        rel = lu["relations_s"]
+        total = sum(s for _, s in lu["extraits"]) + (rel or 0) + lu["recollage_s"]
+        journal("lecture d'OSM : %s ; relations %s s ; recollage %d s ; total %d s"
+                % (", ".join("%s %d s" % (n, s) for n, s in lu["extraits"]), "-" if rel is None else "%d" % rel,
+                   lu["recollage_s"], total))
     return not res["echecs"], res
 
 

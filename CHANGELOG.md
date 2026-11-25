@@ -22,6 +22,12 @@ A built basemap names the exact commit of the factory in its `manifeste.json`; t
 **Project banner**
 - The README opens with the Base Maps banner of the Squadron Ready Room family. The maps do not change.
 
+**GermanyCW: more motorways opened after 1990 left out**
+- Motorway sections opened after 1990 in West Germany, Poland and the Czech Republic are no longer drawn on the GermanyCW map, as was already done for former East Germany.
+
+**Build log: reading time of each OpenStreetMap extract**
+- The check at the end of a build prints, in one line, how long each OpenStreetMap extract took to read; `manifeste.json` keeps the same figures. The maps do not change.
+
 ## 0.2.4 - 2026-11-20
 
 ### Fixed

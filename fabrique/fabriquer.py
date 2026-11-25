@@ -313,6 +313,8 @@ def _fabriquer(chemin_emprise, em_wgs, fichiers_osm, cache_relief, tmp, travail,
             noms=lecture.resume(),
             execution={"bloc_zoom": bloc_zoom, "duree_s": round(time.time() - chrono.t0, 1),
                        "memoire_mio": round(pic), "travail_octets": mag.taille_dossier(travail),
+                       "osm": {"extraits": lecture.extraits, "relations_s": lecture.relations_s,
+                               "recollage_s": lecture.recollage_s},
                        **({"theatre": True} if theatre is not None else {})},
             commit=commit, theatre=theatre)
         manifeste.ecrire(os.path.join(tmp, "manifeste.json"), m)

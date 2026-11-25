@@ -249,10 +249,15 @@ class Exclusions:
 
 
 class Lecture:
-    """Ce que la première passe a vu des noms : les noms écrits et les noms tus, par classe."""
+    """Ce que la première passe a vu des noms : les noms écrits et les noms tus, par classe ; et le temps de lecture
+    (secondes entières) : `extraits` ([nom, s] par fichier de la première passe, dans l'ordre), `relations_s` (la lecture des
+    relations des exclusions, None sans exclusions), `recollage_s` (recollage des chemins et union des localités)."""
 
     def __init__(self):
         self.noms = {"city": {"ecrits": [], "tus": []}, "town": {"ecrits": [], "tus": []}}
+        self.extraits = []
+        self.relations_s = None
+        self.recollage_s = 0
 
     def resume(self):
         return {c: {"ecrits": sorted(v["ecrits"]), "tus": sorted(v["tus"])} for c, v in self.noms.items()}
@@ -266,7 +271,10 @@ def charger(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print
     ex = None
     if exclusions is not None:
         ex = Exclusions(exclusions)
+        debut_rel = time.monotonic()
         ex.lire_relations(fichiers)
+        lecture.relations_s = round(time.monotonic() - debut_rel)
+        journal("relations des frontières lues en %d s" % lecture.relations_s)
         absentes = ex.paires_absentes()
         if absentes:
             from .theatre import TheatreErreur
@@ -364,8 +372,9 @@ def charger(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print
                         magasin.ajouter("pistes", "w%d" % ident, {}, l)
                     else:
                         magasin.ajouter_brut(groupe, ident, n0, n1, props, l)
-        journal("OpenStreetMap lu : %s (%d/%d) en %d s" % (os.path.basename(str(chemin)), i + 1, len(fichiers),
-                                                           round(time.monotonic() - debut)))
+        duree = round(time.monotonic() - debut)
+        lecture.extraits.append([os.path.basename(str(chemin)), duree])
+        journal("OpenStreetMap lu : %s (%d/%d) en %d s" % (os.path.basename(str(chemin)), i + 1, len(fichiers), duree))
     if ignorees:
         journal("aires ignorées : %d" % ignorees)
     magasin.valider()
@@ -525,6 +534,8 @@ def assembler_localites(magasin):
 def lire(fichiers, magasin, emprise_merc, travail, couvre=None, journal=print, exclusions=None):
     """Toute la lecture : première passe, puis recollage. Rend la `Lecture`."""
     lecture = charger(fichiers, magasin, emprise_merc, travail, couvre, journal, exclusions)
+    debut = time.monotonic()
     assembler_chaines(magasin)
     assembler_localites(magasin)
+    lecture.recollage_s = round(time.monotonic() - debut)
     return lecture
