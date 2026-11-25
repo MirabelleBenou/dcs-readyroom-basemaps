@@ -20,17 +20,27 @@ def sha(chemin):
         return hashlib.sha256(f.read()).hexdigest()
 
 
+ETAT_FIXE = {"commit": "0" * 40, "modifie": False}
+# le sous-processus fixe l'état du clone comme le fait le processus du test (voir `deux`)
+SCRIPT_SOUS_PROCESSUS = (
+    "import sys; from fabrique import manifeste, cli; "
+    "manifeste.commit_fabrique = lambda racine: %r; sys.exit(cli.principal(sys.argv[1:]))" % (ETAT_FIXE,))
+
+
 @pytest.fixture(scope="module")
 def deux(jeu):
     """Deux fabrications : la première dans ce processus, la seconde dans un SOUS-PROCESSUS (autre PYTHONHASHSEED, autre
-    dossier de sortie, autre cache : le cache est complet, aucun réseau)."""
+    dossier de sortie, autre cache : le cache est complet, aucun réseau). Dans les deux, l'état du clone (`fabrique.modifie`,
+    lu par `git status`) est fixé : un fichier suivi qui change pendant la suite ne doit pas faire différer les manifestes."""
     a = str(jeu["dossier"] / "sortie_a")
-    fabriquer(jeu["emprise"], [jeu["osm"]], str(jeu["dossier"] / "cache_a"), a, journal=lambda *x: None,
-              entrees_relief=entrees_relief(jeu, "a"))
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(manifeste, "commit_fabrique", lambda racine: dict(ETAT_FIXE))
+        fabriquer(jeu["emprise"], [jeu["osm"]], str(jeu["dossier"] / "cache_a"), a, journal=lambda *x: None,
+                  entrees_relief=entrees_relief(jeu, "a"))
     entrees_relief(jeu, "b")
     b = str(jeu["dossier"] / "sortie_b")
     env = dict(os.environ, PYTHONHASHSEED="12345", PYTHONPATH=RACINE)
-    r = subprocess.run([sys.executable, "-m", "fabrique", "--debug", "fabriquer", "--emprise", jeu["emprise"], "--osm",
+    r = subprocess.run([sys.executable, "-c", SCRIPT_SOUS_PROCESSUS, "--debug", "fabriquer", "--emprise", jeu["emprise"], "--osm",
                         jeu["osm"], "--cache-relief", str(jeu["dossier"] / "dalles_b"), "--sortie", b],
                        capture_output=True, text=True, env=env, cwd=RACINE)
     assert r.returncode == 0, r.stderr + r.stdout

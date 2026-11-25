@@ -16,8 +16,15 @@ import release  # noqa: E402
 
 REPO = 'owner/basemaps'
 TOKEN = 'ghs_TOPSECRETTOKEN0123456789'
-TITRE = 'v1.2.3 - 15 November 2026'
-CHANGELOG = '# Changelog\n\n## Unreleased\n\n## 1.2.3 - 2026-11-15\n\n- x\n'
+TITRE = 'BM-V1.2.3 - 15 November 2026'
+BLOC = (
+    'Each release is a GitHub release tagged `BM-V<major>.<minor>.<patch>`.\n'
+    '- **major**: a redesign;\n'
+    '- **minor**: a new theatre or command;\n'
+    '- **patch**: fixes.')
+ENTETE = '# Changelog\n\nAll notable changes.\n\n### Version numbers\n\n' + BLOC + '\n\n'
+CHANGELOG = ENTETE + '## Unreleased\n\n## BM-V1.2.3 \u2014 2026-11-15\n\n- x\n'
+NOTES = 'Release text\n\n## Version numbers\n\n' + BLOC + '\n'
 ZIP = b'some file bytes'
 
 
@@ -94,7 +101,7 @@ class FakeApi:
         raise AssertionError(f'unexpected call {methode} {chemin}')
 
 
-def monte(tmp_path, *, branche='release/v1.2.3', tag='v1.2.3', changelog=CHANGELOG, notes='Release text\n',
+def monte(tmp_path, *, branche='release/BM-V1.2.3', tag='BM-V1.2.3', changelog=CHANGELOG, notes=NOTES,
           assets=None, manifeste=True, manifest_edit=None, main_avance=False, hors_release=False, extra_asset=None,
           essai=False):
     """Depot origin nu, un commit C sur main, la branche release, puis un clone `action` sur la tete de la branche."""
@@ -144,6 +151,10 @@ def monte(tmp_path, *, branche='release/v1.2.3', tag='v1.2.3', changelog=CHANGEL
     return deps, api, origin, c, branche
 
 
+def lines_ok7(lignes):
+    return lignes[6].startswith('7. OK - "Version numbers" paragraph matches')
+
+
 def sur_origin(origin, branche, chemin):
     p = subprocess.run(['git', 'show', f'{branche}:{chemin}'], cwd=str(origin), capture_output=True, text=True, encoding='utf-8')
     return p.stdout if p.returncode == 0 else None
@@ -161,21 +172,21 @@ def test_publication_reussie(tmp_path):
     base = f'/repos/{REPO}'
     up = f'https://uploads.github.com{base}/releases/101/assets?name='
     assert api.calls == [
-        ('GET', f'{base}/git/ref/tags/v1.2.3'),
+        ('GET', f'{base}/git/ref/tags/BM-V1.2.3'),
         ('GET', f'{base}/releases?per_page=100&page=1'),
         ('POST', f'{base}/releases'),
         ('POST', up + 'fichier_a.bin'),
         ('POST', up + 'fichier_b.bin'),
         ('GET', f'{base}/releases/101/assets?per_page=100'),
         ('PATCH', f'{base}/releases/101'),
-        ('GET', f'{base}/releases/tags/v1.2.3'),
-        ('GET', f'{base}/git/ref/tags/v1.2.3'),
+        ('GET', f'{base}/releases/tags/BM-V1.2.3'),
+        ('GET', f'{base}/git/ref/tags/BM-V1.2.3'),
     ]
     b = api.bodies[0]
-    assert b == {'tag_name': 'v1.2.3', 'target_commitish': c, 'name': TITRE, 'body': 'Release text\n',
+    assert b == {'tag_name': 'BM-V1.2.3', 'target_commitish': c, 'name': TITRE, 'body': NOTES,
                  'draft': True, 'prerelease': False}
     r = api.releases[101]
-    assert r['draft'] is False and api.tags['v1.2.3'] == c
+    assert r['draft'] is False and api.tags['BM-V1.2.3'] == c
     assert br not in branches(origin)
 
 
@@ -189,7 +200,7 @@ def test_pas_de_manifeste_aucun_appel(tmp_path, capsys):
 
 
 def _m_tag_branche(m):
-    m['tag'] = 'v1.2.4'
+    m['tag'] = 'BM-V1.2.4'
 
 
 def _m_cle_en_trop(m):
@@ -222,7 +233,7 @@ def test_controle_en_defaut(tmp_path, cas, opts, controle):
 
 def test_controle_4_tag_existant(tmp_path):
     deps, api, origin, c, br = monte(tmp_path)
-    api.tags['v1.2.3'] = 'a' * 40
+    api.tags['BM-V1.2.3'] = 'a' * 40
     assert release.run(deps, br) == 1
     assert api.writes == []
     assert 'Control or step: 4' in sur_origin(origin, br, '.release/FAILED.md')
@@ -230,7 +241,7 @@ def test_controle_4_tag_existant(tmp_path):
 
 def test_controle_4_brouillon_existant(tmp_path):
     deps, api, origin, c, br = monte(tmp_path)
-    api.releases[7] = {'id': 7, 'tag_name': 'v1.2.3', 'draft': True}
+    api.releases[7] = {'id': 7, 'tag_name': 'BM-V1.2.3', 'draft': True}
     assert release.run(deps, br) == 1
     assert api.writes == []
     assert 'Control or step: 4' in sur_origin(origin, br, '.release/FAILED.md')
@@ -272,8 +283,8 @@ def test_essai_reussi(tmp_path):
     assert api.writes == []
     check = sur_origin(origin, br, '.release/CHECK.md')
     lignes = check.strip().splitlines()
-    assert len(lignes) == 6 and all(' OK ' in l for l in lignes)
-    assert 'head of main: no' in lignes[1]
+    assert len(lignes) == 7 and all(' OK ' in l for l in lignes)
+    assert 'head of main: no' in lignes[1] and lines_ok7(lignes)
     assert br in branches(origin)
     assert sur_origin(origin, br, '.release/FAILED.md') is None
 
@@ -459,7 +470,7 @@ def test_essai_avec_morceaux(tmp_path, monkeypatch):
     assert release.run(deps, br) == 0
     assert api.writes == []
     lignes = (deps.root / '.release' / 'CHECK.md').read_text(encoding='utf-8').strip().splitlines()
-    assert len(lignes) == 6 and all(' OK ' in l for l in lignes)
+    assert len(lignes) == 7 and all(' OK ' in l for l in lignes)
     assert '5. OK' in lignes[4] and 'joined from parts' in lignes[4]
     assert list(rt.iterdir()) == []
 
@@ -491,16 +502,16 @@ def test_publication_sans_fichier(tmp_path):
     assert release.run(deps, br) == 0
     base = f'/repos/{REPO}'
     assert api.calls == [
-        ('GET', f'{base}/git/ref/tags/v1.2.3'),
+        ('GET', f'{base}/git/ref/tags/BM-V1.2.3'),
         ('GET', f'{base}/releases?per_page=100&page=1'),
         ('POST', f'{base}/releases'),
         ('GET', f'{base}/releases/101/assets?per_page=100'),
         ('PATCH', f'{base}/releases/101'),
-        ('GET', f'{base}/releases/tags/v1.2.3'),
-        ('GET', f'{base}/git/ref/tags/v1.2.3'),
+        ('GET', f'{base}/releases/tags/BM-V1.2.3'),
+        ('GET', f'{base}/git/ref/tags/BM-V1.2.3'),
     ]
     assert not any('uploads.github.com' in ch for _, ch in api.calls)
-    assert api.releases[101]['draft'] is False and api.tags['v1.2.3'] == c
+    assert api.releases[101]['draft'] is False and api.tags['BM-V1.2.3'] == c
     assert br not in branches(origin)
 
 
@@ -509,7 +520,7 @@ def test_essai_sans_fichier(tmp_path):
     assert release.run(deps, br) == 0
     assert api.writes == []
     lignes = sur_origin(origin, br, '.release/CHECK.md').strip().splitlines()
-    assert len(lignes) == 6 and all(' OK ' in l for l in lignes)
+    assert len(lignes) == 7 and all(' OK ' in l for l in lignes)
     assert 'no asset' in lignes[4]
 
 
@@ -522,23 +533,104 @@ def test_fichier_en_trop_avec_liste_vide(tmp_path):
 
 
 def test_changelog_forme_acceptee(tmp_path):
-    deps, api, origin, c, br = monte(tmp_path, branche='release/essai-un', changelog='# Changelog\n\n## 1.2.3 - 2026-11-15\n')
+    deps, api, origin, c, br = monte(tmp_path, branche='release/essai-un', changelog=ENTETE + '## BM-V1.2.3 \u2014 2026-11-15\n')
     assert release.run(deps, br) == 0
 
 
-@pytest.mark.parametrize('titre', ['## v1.2.3 - 2026-11-15', '## 1.2.3 \u2014 2026-11-15', '## 1.2.4 - 2026-11-15'])
+@pytest.mark.parametrize('titre', ['## v1.2.3 \u2014 2026-11-15', '## 1.2.3 - 2026-11-15', '## BM-V1.2.3 - 2026-11-15',
+                                   '## BM-V1.2.4 \u2014 2026-11-15', '## BM-V1.2.3 \u2014 2026-02-30'])
 def test_changelog_forme_refusee(tmp_path, titre):
-    deps, api, origin, c, br = monte(tmp_path, changelog=f'# Changelog\n\n## Unreleased\n\n{titre}\n')
+    deps, api, origin, c, br = monte(tmp_path, changelog=f'{ENTETE}## Unreleased\n\n{titre}\n')
     assert release.run(deps, br) == 1
     assert api.writes == []
     assert 'Control or step: 3' in sur_origin(origin, br, '.release/FAILED.md')
 
 
-def test_branche_ancien_format_refusee(tmp_path):
-    deps, api, origin, c, br = monte(tmp_path, branche='release/AC-V1.2.3', tag='v1.2.3')
+@pytest.mark.parametrize('branche', ['release/AC-V1.2.3', 'release/v1.2.3', 'release/BM-v1.2.3'])
+def test_branche_ancien_format_refusee(tmp_path, branche):
+    deps, api, origin, c, br = monte(tmp_path, branche=branche, tag='BM-V1.2.3')
     assert release.run(deps, br) == 1
     assert api.writes == []
     assert 'Control or step: 1' in sur_origin(origin, br, '.release/FAILED.md')
+
+
+def test_tag_ancien_format_refuse(tmp_path):
+    deps, api, origin, c, br = monte(tmp_path, tag='v1.2.3')
+    assert release.run(deps, br) == 1
+    assert api.writes == []
+    f = sur_origin(origin, br, '.release/FAILED.md')
+    assert 'Control or step: 1' in f and 'BM-V<x.y.z>' in f
+
+
+# ------------------------------------------------------------------ le controle 7 : la numerotation
+
+def _echec7(tmp_path, attendu, branche='release/BM-V1.2.3', **kw):
+    deps, api, origin, c, br = monte(tmp_path, branche=branche, **kw)
+    assert release.run(deps, br) == 1
+    assert api.writes == []
+    if branche.startswith('release/essai-'):
+        return sur_origin(origin, br, '.release/CHECK.md')
+    f = sur_origin(origin, br, '.release/FAILED.md')
+    assert 'Control or step: 7' in f and attendu in f
+    return f
+
+
+def test_controle_7_notes_sans_paragraphe(tmp_path):
+    _echec7(tmp_path, 'notes.md has no "## Version numbers" paragraph', notes='Release text\n')
+
+
+def test_controle_7_paragraphe_different_d_un_caractere(tmp_path):
+    _echec7(tmp_path, 'differs from the CHANGELOG header', notes=NOTES.replace('fixes.', 'fixes,'))
+
+
+def test_controle_7_changelog_sans_bloc(tmp_path):
+    sans = '# Changelog\n\n## Unreleased\n\n## BM-V1.2.3 \u2014 2026-11-15\n\n- x\n'
+    _echec7(tmp_path, 'has no "### Version numbers" block before "## Unreleased"', changelog=sans)
+
+
+def test_controle_7_bloc_apres_unreleased(tmp_path):
+    apres = ('# Changelog\n\n## Unreleased\n\n### Version numbers\n\n' + BLOC + '\n\n## BM-V1.2.3 \u2014 2026-11-15\n\n- x\n')
+    _echec7(tmp_path, 'has no "### Version numbers" block before "## Unreleased"', changelog=apres)
+
+
+def test_controle_7_bloc_vide(tmp_path):
+    vide = '# Changelog\n\n### Version numbers\n\n## Unreleased\n\n## BM-V1.2.3 \u2014 2026-11-15\n'
+    _echec7(tmp_path, 'has no "### Version numbers" block', changelog=vide)
+
+
+def test_controle_7_le_dernier_paragraphe_des_notes_compte(tmp_path):
+    notes = '## Version numbers\n\nold text\n\n' + NOTES
+    deps, api, origin, c, br = monte(tmp_path, notes=notes)
+    assert release.run(deps, br) == 0
+    assert br not in branches(origin)
+    _echec7(tmp_path / 'b', 'differs from the CHANGELOG header', notes=NOTES + '\n## Version numbers\n\nold text\n')
+
+
+def test_controle_7_espaces_en_fin_de_ligne_et_de_notes(tmp_path):
+    deps, api, origin, c, br = monte(tmp_path, notes='Release text\n\n## Version numbers  \n\n' + BLOC + '\n\n\n')
+    assert release.run(deps, br) == 0
+
+
+def test_controle_7_le_changelog_est_lu_au_commit_du_manifeste(tmp_path):
+    # la difference est dans le CHANGELOG du commit du manifeste : le controle le lit la, pas a la tete de main
+    deps, api, origin, c, br = monte(tmp_path, branche='release/essai-un', changelog=CHANGELOG.replace('fixes.', 'fixes!'),
+                                     main_avance=True)
+    assert release.run(deps, br) == 1
+    assert sur_origin(origin, br, '.release/CHECK.md').strip().splitlines()[-1].startswith('7. FAILED')
+
+
+def test_essai_en_defaut_au_controle_7_ecrit_sept_lignes(tmp_path):
+    check = _echec7(tmp_path, '', branche='release/essai-un', notes='Release text\n')
+    lignes = check.strip().splitlines()
+    assert len(lignes) == 7 and all(' OK ' in l for l in lignes[:6])
+    assert lignes[6].startswith('7. FAILED - notes.md has no "## Version numbers" paragraph')
+
+
+def test_controle_7_apres_le_6(tmp_path):
+    deps, api, origin, c, br = monte(tmp_path, branche='release/essai-un', notes='')
+    assert release.run(deps, br) == 1
+    lignes = sur_origin(origin, br, '.release/CHECK.md').strip().splitlines()
+    assert len(lignes) == 6 and lignes[-1].startswith('6. FAILED')
 
 
 def test_nom_de_fichier_avec_espace_refuse(tmp_path):

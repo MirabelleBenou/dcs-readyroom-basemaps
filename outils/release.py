@@ -3,7 +3,7 @@
 
   python3 outils/release.py       lit GITHUB_REPOSITORY, GITHUB_REF_NAME, GITHUB_TOKEN ; code 0 si tout va bien, 1 sinon
 
-Branche release/v<x.y.z> : publication. Branche release/essai-<nom> : les memes controles, rien n'est cree.
+Branche release/BM-V<x.y.z> : publication. Branche release/essai-<nom> : les memes controles, rien n'est cree.
 Un fichier trop gros pour un push arrive en morceaux <nom>.part001, .part002... : ils sont joints hors du depot, le fichier joint est controle puis televerse.
 Une release peut n'avoir aucun fichier (assets: []).
 Sans .release/manifest.json sur la branche : rien n'est fait. Le git et l'API passent par l'objet Deps, que les tests remplacent.
@@ -31,8 +31,8 @@ TAILLE_MAX = 2 * 1024 ** 3
 RELEASE_DIR = '.release'
 CLES_MANIFESTE = ('tag', 'title', 'commit', 'assets')
 CLES_ASSET = ('name', 'size', 'sha256')
-RE_TAG = re.compile(r'v\d+\.\d+\.\d+')
-RE_BRANCHE_PUB = re.compile(r'release/(v\d+\.\d+\.\d+)')
+RE_TAG = re.compile(r'BM-V\d+\.\d+\.\d+')
+RE_BRANCHE_PUB = re.compile(r'release/(BM-V\d+\.\d+\.\d+)')
 RE_BRANCHE_ESSAI = re.compile(r'release/essai-[A-Za-z0-9._-]+')
 RE_COMMIT = re.compile(r'[0-9a-f]{40}')
 RE_SHA = re.compile(r'[0-9a-f]{64}')
@@ -158,7 +158,7 @@ def _manifeste(brut, branche):
     elif RE_BRANCHE_ESSAI.fullmatch(branche):
         essai = True
     else:
-        raise Echec('1', f'branch name "{branche}" is neither release/v<x.y.z> nor release/essai-<name>')
+        raise Echec('1', f'branch name "{branche}" is neither release/BM-V<x.y.z> nor release/essai-<name>')
     try:
         m = json.loads(brut)
     except ValueError as e:
@@ -166,7 +166,7 @@ def _manifeste(brut, branche):
     if not isinstance(m, dict) or set(m) != set(CLES_MANIFESTE):
         raise Echec('1', f'manifest.json keys must be exactly {", ".join(CLES_MANIFESTE)}')
     if not isinstance(m['tag'], str) or not RE_TAG.fullmatch(m['tag']):
-        raise Echec('1', 'manifest tag must look like v<x.y.z>')
+        raise Echec('1', 'manifest tag must look like BM-V<x.y.z>')
     if not isinstance(m['title'], str) or not m['title'].strip():
         raise Echec('1', 'manifest title must be a non-empty string')
     if not isinstance(m['commit'], str) or not RE_COMMIT.fullmatch(m['commit']):
@@ -207,10 +207,15 @@ def _controle_changelog(deps, m):
     p = deps.git.run('show', f'{m["commit"]}:CHANGELOG.md', check=False)
     if p.returncode != 0:
         raise Echec('3', 'CHANGELOG.md not found at the commit')
-    debut = f'## {m["tag"][1:]} - '
-    if not any(l.startswith(debut) for l in p.stdout.splitlines()):
-        raise Echec('3', f'CHANGELOG.md at the commit has no title starting with "{debut}"')
-    return f'CHANGELOG title for {m["tag"]} found'
+    prefixe = f'## {m["tag"]} \u2014 '
+    for l in p.stdout.splitlines():
+        if l.startswith(prefixe) and re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', l[len(prefixe):]):
+            try:
+                time.strptime(l[len(prefixe):], '%Y-%m-%d')
+            except ValueError:
+                continue
+            return f'CHANGELOG line {l} found'
+    raise Echec('3', f'CHANGELOG.md at the commit has no line "## {m["tag"]} \u2014 YYYY-MM-DD"')
 
 
 def _controle_tag(deps, m):
@@ -321,8 +326,44 @@ def _controle_notes(deps):
     return 'notes.md is not empty'
 
 
+def _paragraphe_changelog(deps, m):
+    """Le bloc qui suit la ligne `### Version numbers` du CHANGELOG au commit, jusqu'au titre `## ` suivant (`## Unreleased`, ou, une fois la
+    release nommee, `## BM-V<x.y.z> - AAAA-MM-JJ`), exclu, strip()."""
+    p = deps.git.run('show', f'{m["commit"]}:CHANGELOG.md', check=False)
+    manque = Echec('7', 'CHANGELOG.md at the commit has no "### Version numbers" block before "## Unreleased"')
+    if p.returncode != 0:
+        raise manque
+    bloc, dedans = [], False
+    for l in p.stdout.split('\n'):
+        if not dedans:
+            if l.rstrip() == '### Version numbers':
+                dedans = True
+            elif l.startswith('## '):
+                break
+        elif l.startswith('## '):
+            break
+        else:
+            bloc.append(l)
+    texte = '\n'.join(bloc).strip() if dedans else ''
+    if not texte:
+        raise manque
+    return texte
+
+
+def _controle_numerotation(deps, m):
+    """Controle 7 : les notes finissent par un paragraphe `## Version numbers` egal, mot pour mot, a l'en-tete du CHANGELOG."""
+    source = _paragraphe_changelog(deps, m)
+    lignes = (deps.root / RELEASE_DIR / 'notes.md').read_text(encoding='utf-8').split('\n')
+    k = max((i for i, l in enumerate(lignes) if l.rstrip() == '## Version numbers'), default=-1)
+    if k < 0:
+        raise Echec('7', 'notes.md has no "## Version numbers" paragraph')
+    if '\n'.join(lignes[k + 1:]).strip() != source:
+        raise Echec('7', 'the "Version numbers" paragraph of notes.md differs from the CHANGELOG header')
+    return '"Version numbers" paragraph matches the CHANGELOG header'
+
+
 def controles(deps, branche, brut, lignes):
-    """Les six controles dans l'ordre ; ajoute une ligne par controle execute a `lignes` ; leve Echec au premier defaut.
+    """Les sept controles dans l'ordre ; ajoute une ligne par controle execute a `lignes` ; leve Echec au premier defaut.
     Renvoie (manifeste, essai)."""
     def ligne(n, etat, msg):
         lignes.append(f'{n}. {etat} - {msg}')
@@ -336,6 +377,7 @@ def controles(deps, branche, brut, lignes):
         ligne(4, 'OK', _controle_tag(deps, m))
         ligne(5, 'OK', _controle_assets(deps, m))
         ligne(6, 'OK', _controle_notes(deps))
+        ligne(7, 'OK', _controle_numerotation(deps, m))
     except Echec as e:
         ligne(e.quoi, 'FAILED', deps.scrub(e.message))
         raise

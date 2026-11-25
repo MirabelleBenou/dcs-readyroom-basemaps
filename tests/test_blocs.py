@@ -38,7 +38,10 @@ def traversee(tmp_path_factory):
     return jeu, e, p
 
 
-def test_le_zoom_pivot_ne_change_aucun_octet(traversee):
+def test_le_zoom_pivot_ne_change_aucun_octet(traversee, monkeypatch):
+    # `fabrique.modifie` (git status) entre dans le manifeste comparable : un fichier suivi qui change pendant la suite
+    # ferait différer les trois fabrications sans que la fabrique y soit pour rien ; l'état du clone est donc fixé
+    monkeypatch.setattr(manifeste, "commit_fabrique", lambda racine: {"commit": "0" * 40, "modifie": False})
     jeu, e, p = traversee
     em = fab.emprise_merc(lire_emprise(e))
     assert len(fab.blocs_du_pivot(10, em)) == 2 and len(fab.blocs_du_pivot(8, em)) == 1
