@@ -11,7 +11,7 @@ Each release is a GitHub release tagged `BM-V<major>.<minor>.<patch>`; releases 
 
 A built basemap names the exact commit of the factory in its `manifeste.json`; there is no build number.
 
-## Unreleased
+## BM-V0.2.5 — 2026-11-26
 
 **Release tags start with BM-V**
 - From the next release on, tags read `BM-V<major>.<minor>.<patch>`; the header of this changelog says what each number means.
